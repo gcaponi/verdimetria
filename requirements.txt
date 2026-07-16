@@ -1,0 +1,25 @@
+# Core geospaziale
+rasterio==1.5.0
+shapely==2.1.2
+pyproj==3.7.2
+geopandas==1.1.4
+
+# Machine learning
+scikit-learn==1.8.0
+numpy==2.4.4
+scipy==1.17.1
+
+# Ingestione dati
+owslib==0.36.0          # WMS/WFS per il Geoportale S.I.T.R. Sicilia
+soilgrids==0.1.5        # SoilGrids via WCS (l'API REST a punti è sospesa da ISRIC)
+cdse-client[geo]==0.4.0 # Sentinel-2/DEM via Copernicus Data Space Ecosystem
+requests==2.33.1        # WMS via Configuration Instance Sentinel Hub
+requests-oauthlib==2.0.0 # OAuth per la Process API (dati quantitativi puliti)
+oauthlib==3.2.2
+
+# Visualizzazione
+folium==0.20.0
+matplotlib==3.10.8
+
+# Test
+pytest==9.1.1
