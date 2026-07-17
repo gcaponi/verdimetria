@@ -93,13 +93,13 @@ export default function Home() {
     const rows = viewData.fields.map((f) =>
       [f.id, f.name, f.crop, f.area_ha, f.ndvi, f.weakness, f.n, f.p, f.k, f.ph, f.som, f.clay].join(";")
     );
-    download("ragusa_geo_intel_campi.csv", [head, ...rows].join("\n"), "text/csv");
+    download("verdimetria_campi.csv", [head, ...rows].join("\n"), "text/csv");
   };
 
   const exportReport = () => {
     const r = field.ratings;
     const md = `# Rapporto di analisi — ${field.name}
-**Ragusa Geo-Intelligence** · generato il ${new Date().toLocaleDateString("it-IT")}
+**Verdimetria** · generato il ${new Date().toLocaleDateString("it-IT")}
 
 - **Coltura:** ${field.crop}
 - **Superficie:** ${field.area_ha} ha
@@ -137,7 +137,7 @@ ${field.insights.map((i) => `- **${i.title}.** ${i.text}`).join("\n")}
               <Sprout className="h-5 w-5 text-lime-400" />
             </div>
             <div>
-              <div className="text-[15px] font-bold leading-tight">Ragusa Geo-Intelligence</div>
+              <div className="text-[15px] font-bold leading-tight">Verdimetria</div>
               <div className="flex items-center gap-1 text-[11px] leading-tight text-slate-500">
                 <MapPin className="h-3 w-3" /> Libero consorzio di Ragusa · Sentinel-2 + SoilGrids + S.IT.R.
               </div>
