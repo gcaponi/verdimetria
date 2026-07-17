@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { areaBounds, buildWmsUrl, WMS_LAYERS } from "@/lib/wms";
+import { areaBounds, buildWmsUrl } from "@/lib/wms";
+import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
-import { Hexagon, RectangleHorizontal, X } from "lucide-react";
+import { ChevronDown, Hexagon, RectangleHorizontal, X } from "lucide-react";
 
 interface Props {
   areas: MapArea[];
-  activeLayerId: string;
+  activeLayer: WmsLayer;
   selectedAreaId: string | null;
   onSelectArea: (id: string) => void;
   onCustomArea: (poly: [number, number][]) => void;
@@ -18,7 +19,7 @@ type LayerStatus = "idle" | "loading" | "ready" | "error";
 
 export default function MapPanelNational({
   areas,
-  activeLayerId,
+  activeLayer,
   selectedAreaId,
   onSelectArea,
   onCustomArea,
@@ -41,7 +42,6 @@ export default function MapPanelNational({
   onCustomRef.current = onCustomArea;
 
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
-  const activeLayer = WMS_LAYERS.find((layer) => layer.id === activeLayerId);
 
   const setMode = (mode: DrawMode) => {
     modeRef.current = mode;
@@ -212,7 +212,7 @@ export default function MapPanelNational({
   }, [areas, selectedAreaId]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-xl border border-slate-800">
+    <div className="relative isolate z-0 h-full w-full overflow-hidden rounded-xl border border-slate-800">
       <div ref={containerRef} className="h-full w-full bg-slate-950" />
 
       <div className="absolute left-1/2 top-4 z-[500] flex -translate-x-1/2 items-center gap-1.5">
@@ -266,6 +266,7 @@ export default function MapPanelNational({
           <div className={layerStatusColor(layerStatus)}>
             {layerStatusLabel(layerStatus, activeLayer.provider)}
           </div>
+          <LayerLegend layer={activeLayer} />
         </div>
       )}
 
@@ -340,4 +341,56 @@ function layerStatusColor(status: LayerStatus): string {
   if (status === "ready") return "mt-1 text-emerald-300";
   if (status === "error") return "mt-1 text-rose-300";
   return "mt-1 text-amber-300";
+}
+
+function LayerLegend({ layer }: { layer: WmsLayer }) {
+  const legend = layer.legend;
+  const [expanded, setExpanded] = useState(false);
+  if (!legend) {
+    return (
+      <div className="mt-2 border-t border-slate-700/70 pt-2 text-[10px] leading-relaxed text-slate-500">
+        Layer visuale WMS senza scala numerica pubblicata.
+      </div>
+    );
+  }
+
+  if (legend.kind === "image" && legend.imageUrl) {
+    return (
+      <div className="mt-2 border-t border-slate-700/70 pt-2">
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="flex w-full items-center justify-between gap-3 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300 hover:text-white"
+          aria-expanded={expanded}
+        >
+          Legenda ufficiale SoilGrids
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        </button>
+        {expanded && (
+          <div className="mt-2 max-h-56 overflow-y-auto rounded bg-white p-1.5">
+            <img
+              src={legend.imageUrl}
+              alt={`Scala colori ${layer.label}`}
+              className="mx-auto h-auto max-w-full"
+            />
+          </div>
+        )}
+        {legend.note && <p className="mt-1.5 leading-relaxed text-slate-500">{legend.note}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 border-t border-slate-700/70 pt-2">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        Scala colori
+      </div>
+      <div className="h-2.5 w-full rounded-sm" style={{ background: legend.gradient }} />
+      <div className="mt-1 flex justify-between text-[10px] text-slate-400">
+        <span>{legend.lowLabel}</span>
+        <span>{legend.highLabel}</span>
+      </div>
+      {legend.note && <p className="mt-1.5 leading-relaxed text-slate-500">{legend.note}</p>}
+    </div>
+  );
 }

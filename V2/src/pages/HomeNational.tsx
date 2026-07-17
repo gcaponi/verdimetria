@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import MapPanelNational from "@/components/MapPanelNational";
-import WeatherSection from "@/sections/WeatherSection";
-import { WMS_LAYERS } from "@/lib/wms";
+import LayerCatalog from "@/components/LayerCatalog";
+import AnalysisWorkspace from "@/components/AnalysisWorkspace";
+import { loadCdseCatalog, WMS_LAYERS } from "@/lib/wms";
 import {
   CloudSun,
   ChevronDown,
@@ -20,11 +21,27 @@ export default function HomeNational() {
   const [areas, setAreas] = useState<MapArea[]>([]);
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [layerId, setLayerId] = useState("NDVI");
+  const [layers, setLayers] = useState(WMS_LAYERS);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadCdseCatalog(controller.signal)
+      .then((catalogLayers) => setLayers([...WMS_LAYERS, ...catalogLayers]))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setCatalogError(error instanceof Error ? error.message : "Catalogo CDSE non disponibile");
+      })
+      .finally(() => setCatalogLoading(false));
+    return () => controller.abort();
+  }, []);
 
   const selectedArea = useMemo(
     () => areas.find((area) => area.id === selectedAreaId) ?? null,
     [areas, selectedAreaId]
   );
+  const activeLayer = layers.find((layer) => layer.id === layerId) ?? WMS_LAYERS[0];
 
   const handleCustomArea = (poly: [number, number][]) => {
     const number = areas.length + 1;
@@ -104,7 +121,7 @@ export default function HomeNational() {
               icon={<Layers className="h-3.5 w-3.5" />}
               value={layerId}
               onChange={setLayerId}
-              options={WMS_LAYERS.map((layer) => ({
+              options={layers.map((layer) => ({
                 value: layer.id,
                 label: layer.provider === "pending" ? `${layer.label} · in preparazione` : layer.label,
                 disabled: layer.provider === "pending",
@@ -121,8 +138,8 @@ export default function HomeNational() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1600px] gap-4 px-4 py-4 lg:grid lg:grid-cols-[minmax(0,1fr)_48%]">
-        <div className="space-y-5">
+      <main className="mx-auto flex max-w-[1600px] flex-col gap-4 px-4 py-4 lg:grid lg:grid-cols-[minmax(0,1fr)_48%]">
+        <div className="order-2 space-y-5 lg:order-1">
           {selectedArea ? (
             <>
               <section className="border-y border-slate-800 py-5">
@@ -147,7 +164,12 @@ export default function HomeNational() {
                   API e WCS dopo la configurazione dei job backend.
                 </div>
               </section>
-              <WeatherSection field={selectedArea} />
+              <AnalysisWorkspace
+                area={selectedArea}
+                layers={layers}
+                activeLayerId={layerId}
+                onLayerChange={setLayerId}
+              />
             </>
           ) : (
             <section className="flex min-h-64 items-center justify-center border-y border-slate-800 py-12 text-center">
@@ -160,6 +182,14 @@ export default function HomeNational() {
               </div>
             </section>
           )}
+
+          <LayerCatalog
+            layers={layers}
+            activeLayerId={layerId}
+            onLayerChange={setLayerId}
+            catalogLoading={catalogLoading}
+            catalogError={catalogError}
+          />
 
           <footer className="border-y border-slate-800 py-5 text-[11px] leading-relaxed text-slate-400">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-200">
@@ -178,11 +208,11 @@ export default function HomeNational() {
           </footer>
         </div>
 
-        <div className="mt-4 lg:mt-0">
-          <div className="sticky top-[72px] h-[560px] lg:h-[calc(100vh-96px)]">
+        <div className="order-1 lg:order-2">
+          <div className="h-[560px] lg:sticky lg:top-[72px] lg:h-[calc(100vh-96px)]">
             <MapPanelNational
               areas={areas}
-              activeLayerId={layerId}
+              activeLayer={activeLayer}
               selectedAreaId={selectedAreaId}
               onSelectArea={setSelectedAreaId}
               onCustomArea={handleCustomArea}
