@@ -42,7 +42,7 @@ export interface FieldData extends MapArea {
   weak_frac: number;
   ratings: Record<RatingKey, string>;
   health: { healthy: number; marginal: number; stressed: number };
-  hist: { counts: number[]; edges: number[] };https://app.sior
+  hist: { counts: number[]; edges: number[] };
   anomaly_mean: number;
   insights: Insight[];
 }
