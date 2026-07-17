@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
-from typing import Any
+from typing import Any, Protocol, cast
 
 from oauthlib.oauth2 import BackendApplicationClient
 from requests_oauthlib import OAuth2Session
@@ -51,17 +51,32 @@ function evaluatePixel(sample) {
 """.strip()
 
 
-def _get_oauth_session() -> OAuth2Session:
+class OAuthTokenFetcher(Protocol):
+    def fetch_token(
+        self,
+        *,
+        token_url: str,
+        client_secret: str,
+        include_client_id: bool,
+    ) -> dict[str, Any]: ...
+
+
+def get_oauth_session() -> OAuth2Session:
     client_id = os.environ["CDSE_CLIENT_ID"]
     client_secret = os.environ["CDSE_CLIENT_SECRET"]
 
     client = BackendApplicationClient(client_id=client_id)
     oauth = OAuth2Session(client=client)
-    oauth.fetch_token(token_url=TOKEN_URL, client_secret=client_secret, include_client_id=True)
+    token_fetcher = cast(OAuthTokenFetcher, oauth)
+    token_fetcher.fetch_token(
+        token_url=TOKEN_URL,
+        client_secret=client_secret,
+        include_client_id=True,
+    )
     return oauth
 
 
-def _crs_uri(target_crs: str) -> str:
+def crs_uri(target_crs: str) -> str:
     authority, separator, code = target_crs.upper().partition(":")
     if authority != "EPSG" or separator != ":" or not code.isdigit():
         raise ValueError("Il CRS di output deve avere formato EPSG:<codice>")
@@ -98,7 +113,7 @@ def build_process_request(
         "input": {
             "bounds": {
                 "geometry": projected_geometry,
-                "properties": {"crs": _crs_uri(target_crs)},
+                "properties": {"crs": crs_uri(target_crs)},
             },
             "data": [{
                 "type": collection,
@@ -154,7 +169,7 @@ def fetch_processed_layer(
         collection=collection,
         max_cloud_cover=max_cloud_cover,
     )
-    oauth = _get_oauth_session()
+    oauth = get_oauth_session()
 
     response = oauth.post(PROCESS_URL, json=request_body, headers={"Accept": "image/tiff"})
     response.raise_for_status()

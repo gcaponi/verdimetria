@@ -88,7 +88,7 @@ def test_fetch_ndvi_posts_built_payload_and_writes_geotiff(
     area = AnalysisArea.from_geojson("Campo pilota", FIELD_POLYGON)
     fake_oauth = FakeOAuthSession()
     output_path = tmp_path / "ndvi.tiff"
-    monkeypatch.setattr(process_api, "_get_oauth_session", lambda: fake_oauth)
+    monkeypatch.setattr(process_api, "get_oauth_session", lambda: fake_oauth)
 
     process_api.fetch_ndvi(
         area,
