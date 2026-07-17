@@ -182,7 +182,7 @@ def main():
     os.makedirs(raw_dir, exist_ok=True)
     os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
-    print("DEMO SINTETICA — Ragusa Geo-Intelligence")
+    print("DEMO SINTETICA — Verdimetria")
     print(f"AOI: {RAGUSA_AOI.name} bbox={RAGUSA_AOI.as_bbox()}")
     print("NOTA: tutti i dati usati qui sono generati casualmente, servono solo a")
     print("dimostrare che la pipeline gira correttamente end-to-end.\n")

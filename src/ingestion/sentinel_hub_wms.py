@@ -1,5 +1,5 @@
 """
-Client WMS per la Configuration Instance "ragusa-geo-intel" su Sentinel Hub
+Client WMS per la Configuration Instance "verdimetria" su Sentinel Hub
 (Copernicus Data Space Ecosystem).
 
 A differenza di sentinel2_cdse.py (che cerca/scarica scene grezze via
@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import requests
 
-# Trovato nella tua Configuration Utility (screenshot "ragusa-geo-intel")
+# Trovato nella tua Configuration Utility (screenshot "verdimetria")
 INSTANCE_ID = "1ca53dc1-1760-4d9a-b80d-52f4d69602d7"
 WMS_BASE_URL = f"https://sh.dataspace.copernicus.eu/ogc/wms/{INSTANCE_ID}"
 

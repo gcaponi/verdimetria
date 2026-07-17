@@ -1,4 +1,4 @@
-# VerdiMetria
+# Verdimetria
 
 > **Stato al 2026-07-16:** repository di partenza, non prodotto pronto.
 > `src/` contiene un prototipo analitico Python da estrarre e validare su dati reali;
@@ -58,7 +58,7 @@ Sicilia). Sono corretti sulla carta, ma la prima esecuzione reale la farai
 tu: aspettati di dover aggiustare qualche dettaglio (nomi esatti dei layer
 WMS, formato bbox richiesto dal server WCS, ecc.).
 
-## Il modulo WMS via Configuration Instance (ragusa-geo-intel)
+## Il modulo WMS via Configuration Instance (verdimetria)
 
 Hai creato una Configuration Instance su Sentinel Hub (Instance ID
 `1ca53dc1-1760-4d9a-b80d-52f4d69602d7`, template "Full WMS") che espone
@@ -126,7 +126,7 @@ src/
     soilgrids_client.py        - proprietà del suolo via WCS
     sentinel2_cdse.py          - Sentinel-2 via Copernicus Data Space Ecosystem (STAC+OAuth, scene grezze)
     sentinel_hub_wms.py        - layer già processati (NDVI, Agricoltura, Geologia...) via la
-                                  tua Configuration Instance "ragusa-geo-intel" (Instance ID incluso)
+                                  tua Configuration Instance "verdimetria" (Instance ID incluso)
     process_api.py             - CONSIGLIATO per dati quantitativi: Process API con evalscript
                                   tuo (NDVI raw FLOAT32 su L2A), bypassa l'ambiguità dei preset WMS
   viz/                         - (da popolare: export mappa riutilizzabile)
