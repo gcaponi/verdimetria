@@ -18,10 +18,14 @@ Richiede le stesse credenziali OAuth già configurate in .env
 from __future__ import annotations
 
 import os
+from datetime import date
+from typing import Any
 
-import requests
 from oauthlib.oauth2 import BackendApplicationClient
 from requests_oauthlib import OAuth2Session
+from shapely.geometry import mapping
+
+from src.domain import AnalysisArea
 
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
@@ -32,11 +36,15 @@ NDVI_RAW_EVALSCRIPT = """
 //VERSION=3
 function setup() {
   return {
-    input: [{ bands: ["B04", "B08", "dataMask"] }],
+        input: [{ bands: ["B04", "B08", "SCL", "dataMask"] }],
     output: { bands: 1, sampleType: "FLOAT32" }
   };
 }
 function evaluatePixel(sample) {
+    const invalidScl = [0, 1, 2, 3, 8, 9, 10, 11].includes(sample.SCL);
+    if (sample.dataMask === 0 || invalidScl) {
+        return [NaN];
+    }
   let ndvi = (sample.B08 - sample.B04) / (sample.B08 + sample.B04 + 1e-9);
   return [ndvi];
 }
@@ -53,14 +61,77 @@ def _get_oauth_session() -> OAuth2Session:
     return oauth
 
 
+def _crs_uri(target_crs: str) -> str:
+    authority, separator, code = target_crs.upper().partition(":")
+    if authority != "EPSG" or separator != ":" or not code.isdigit():
+        raise ValueError("Il CRS di output deve avere formato EPSG:<codice>")
+    return f"http://www.opengis.net/def/crs/EPSG/0/{code}"
+
+
+def build_process_request(
+    evalscript: str,
+    area: AnalysisArea,
+    start_date: str,
+    end_date: str,
+    *,
+    resolution_m: float = 10,
+    target_crs: str = "EPSG:32633",
+    max_pixels: int = 25_000_000,
+    collection: str = "sentinel-2-l2a",
+    max_cloud_cover: int = 20,
+) -> dict[str, Any]:
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError as error:
+        raise ValueError("Le date devono avere formato YYYY-MM-DD") from error
+
+    if start > end:
+        raise ValueError("L'intervallo temporale deve avere una data iniziale non successiva alla finale")
+    if not 0 <= max_cloud_cover <= 100:
+        raise ValueError("La copertura nuvolosa deve essere compresa tra 0 e 100")
+
+    dimensions = area.raster_dimensions(resolution_m, target_crs, max_pixels)
+    projected_geometry = mapping(area.projected_geometry(target_crs))
+
+    return {
+        "input": {
+            "bounds": {
+                "geometry": projected_geometry,
+                "properties": {"crs": _crs_uri(target_crs)},
+            },
+            "data": [{
+                "type": collection,
+                "dataFilter": {
+                    "timeRange": {
+                        "from": f"{start_date}T00:00:00Z",
+                        "to": f"{end_date}T23:59:59Z",
+                    },
+                    "maxCloudCoverage": max_cloud_cover,
+                },
+            }],
+        },
+        "output": {
+            "width": dimensions.width,
+            "height": dimensions.height,
+            "responses": [{
+                "identifier": "default",
+                "format": {"type": "image/tiff"},
+            }],
+        },
+        "evalscript": evalscript,
+    }
+
+
 def fetch_processed_layer(
     evalscript: str,
-    bbox_wgs84: list[float],
+    area: AnalysisArea,
     start_date: str,
     end_date: str,
     output_path: str,
-    width: int = 512,
-    height: int = 512,
+    resolution_m: float = 10,
+    target_crs: str = "EPSG:32633",
+    max_pixels: int = 25_000_000,
     collection: str = "sentinel-2-l2a",  # L2A = corretto atmosfericamente, a differenza del preset "Agriculture" (L1C)
     max_cloud_cover: int = 20,
 ) -> None:
@@ -72,25 +143,18 @@ def fetch_processed_layer(
     NOTA: non testato con una chiamata di rete reale in questo ambiente
     (dominio dataspace.copernicus.eu non raggiungibile dalla sandbox).
     """
+    request_body = build_process_request(
+        evalscript,
+        area,
+        start_date,
+        end_date,
+        resolution_m=resolution_m,
+        target_crs=target_crs,
+        max_pixels=max_pixels,
+        collection=collection,
+        max_cloud_cover=max_cloud_cover,
+    )
     oauth = _get_oauth_session()
-
-    request_body = {
-        "input": {
-            "bounds": {
-                "bbox": bbox_wgs84,
-                "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
-            },
-            "data": [{
-                "type": collection,
-                "dataFilter": {
-                    "timeRange": {"from": f"{start_date}T00:00:00Z", "to": f"{end_date}T23:59:59Z"},
-                    "maxCloudCoverage": max_cloud_cover,
-                },
-            }],
-        },
-        "output": {"width": width, "height": height, "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
-        "evalscript": evalscript,
-    }
 
     response = oauth.post(PROCESS_URL, json=request_body, headers={"Accept": "image/tiff"})
     response.raise_for_status()
@@ -99,6 +163,12 @@ def fetch_processed_layer(
         f.write(response.content)
 
 
-def fetch_ndvi(bbox_wgs84: list[float], start_date: str, end_date: str, output_path: str, **kwargs) -> None:
+def fetch_ndvi(
+    area: AnalysisArea,
+    start_date: str,
+    end_date: str,
+    output_path: str,
+    **kwargs: Any,
+) -> None:
     """Scorciatoia: NDVI raw (FLOAT32, una banda) su L2A per l'area/periodo dati."""
-    fetch_processed_layer(NDVI_RAW_EVALSCRIPT, bbox_wgs84, start_date, end_date, output_path, **kwargs)
+    fetch_processed_layer(NDVI_RAW_EVALSCRIPT, area, start_date, end_date, output_path, **kwargs)
