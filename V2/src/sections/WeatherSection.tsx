@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FieldData } from "@/types";
+import type { MapArea } from "@/types";
 import { Card, SectionTitle } from "@/components/ui-bits";
 import { fieldCentroid, fmt } from "@/lib/data";
 import { Thermometer, Droplets, Wind, CloudRain } from "lucide-react";
@@ -16,7 +16,7 @@ interface Wx {
   daily: WxDaily;
 }
 
-export default function WeatherSection({ field }: { field: FieldData }) {
+export default function WeatherSection({ field }: { field: MapArea }) {
   const [wx, setWx] = useState<Wx | null>(null);
   const [err, setErr] = useState(false);
   const [lon, lat] = fieldCentroid(field);

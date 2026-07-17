@@ -1,0 +1,343 @@
+import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { areaBounds, buildWmsUrl, WMS_LAYERS } from "@/lib/wms";
+import type { MapArea } from "@/types";
+import { Hexagon, RectangleHorizontal, X } from "lucide-react";
+
+interface Props {
+  areas: MapArea[];
+  activeLayerId: string;
+  selectedAreaId: string | null;
+  onSelectArea: (id: string) => void;
+  onCustomArea: (poly: [number, number][]) => void;
+}
+
+type DrawMode = "none" | "rect" | "poly";
+type LayerStatus = "idle" | "loading" | "ready" | "error";
+
+export default function MapPanelNational({
+  areas,
+  activeLayerId,
+  selectedAreaId,
+  onSelectArea,
+  onCustomArea,
+}: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const overlayRef = useRef<L.ImageOverlay | null>(null);
+  const areasLayerRef = useRef<L.LayerGroup | null>(null);
+  const tempRef = useRef<L.Layer | null>(null);
+  const [drawMode, setDrawMode] = useState<DrawMode>("none");
+  const [vertCount, setVertCount] = useState(0);
+  const [layerStatus, setLayerStatus] = useState<LayerStatus>("idle");
+
+  const modeRef = useRef<DrawMode>("none");
+  const rectStartRef = useRef<L.LatLng | null>(null);
+  const polyVertsRef = useRef<L.LatLng[]>([]);
+  const onSelectRef = useRef(onSelectArea);
+  const onCustomRef = useRef(onCustomArea);
+  onSelectRef.current = onSelectArea;
+  onCustomRef.current = onCustomArea;
+
+  const selectedArea = areas.find((area) => area.id === selectedAreaId);
+  const activeLayer = WMS_LAYERS.find((layer) => layer.id === activeLayerId);
+
+  const setMode = (mode: DrawMode) => {
+    modeRef.current = mode;
+    setDrawMode(mode);
+    const map = mapRef.current;
+    if (!map) return;
+    if (mode !== "none") {
+      map.doubleClickZoom.disable();
+      if (containerRef.current) containerRef.current.style.cursor = "crosshair";
+    } else {
+      map.doubleClickZoom.enable();
+      map.dragging.enable();
+      if (containerRef.current) containerRef.current.style.cursor = "";
+    }
+  };
+
+  const clearTemp = () => {
+    const map = mapRef.current;
+    if (map && tempRef.current) {
+      map.removeLayer(tempRef.current);
+      tempRef.current = null;
+    }
+    rectStartRef.current = null;
+    polyVertsRef.current = [];
+    setVertCount(0);
+  };
+
+  const finishPolygon = (vertices: L.LatLng[]) => {
+    if (vertices.length < 3) return;
+    const coordinates: [number, number][] = vertices.map((vertex) => [
+      Math.round(vertex.lng * 100000) / 100000,
+      Math.round(vertex.lat * 100000) / 100000,
+    ]);
+    clearTemp();
+    setMode("none");
+    onCustomRef.current(coordinates);
+  };
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    const map = L.map(containerRef.current, {
+      center: [42.2, 12.5],
+      zoom: 6,
+      zoomControl: true,
+      attributionControl: true,
+      maxBounds: L.latLngBounds([34.5, 5.5], [48.5, 20.5]),
+      maxBoundsViscosity: 0.6,
+    });
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      { attribution: "Esri, Maxar, Earthstar Geographics", maxZoom: 18 }
+    ).addTo(map);
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 18, opacity: 0.9 }
+    ).addTo(map);
+    mapRef.current = map;
+    areasLayerRef.current = L.layerGroup().addTo(map);
+
+    map.on("mousedown", (event: L.LeafletMouseEvent) => {
+      if (modeRef.current !== "rect") return;
+      map.dragging.disable();
+      rectStartRef.current = event.latlng;
+      if (tempRef.current) map.removeLayer(tempRef.current);
+      tempRef.current = L.rectangle(
+        L.latLngBounds(event.latlng, event.latlng),
+        tempStyle()
+      ).addTo(map);
+    });
+    map.on("mousemove", (event: L.LeafletMouseEvent) => {
+      if (modeRef.current === "rect" && rectStartRef.current && tempRef.current) {
+        (tempRef.current as L.Rectangle).setBounds(
+          L.latLngBounds(rectStartRef.current, event.latlng)
+        );
+      }
+    });
+    map.on("mouseup", (event: L.LeafletMouseEvent) => {
+      if (modeRef.current !== "rect" || !rectStartRef.current) return;
+      const start = rectStartRef.current;
+      map.dragging.enable();
+      finishPolygon([
+        L.latLng(start.lat, start.lng),
+        L.latLng(start.lat, event.latlng.lng),
+        L.latLng(event.latlng.lat, event.latlng.lng),
+        L.latLng(event.latlng.lat, start.lng),
+      ]);
+    });
+    map.on("click", (event: L.LeafletMouseEvent) => {
+      if (modeRef.current !== "poly") return;
+      polyVertsRef.current.push(event.latlng);
+      setVertCount(polyVertsRef.current.length);
+      if (tempRef.current) map.removeLayer(tempRef.current);
+      tempRef.current = L.polygon(polyVertsRef.current, tempStyle()).addTo(map);
+    });
+    map.on("dblclick", () => {
+      if (modeRef.current === "poly") finishPolygon(polyVertsRef.current);
+    });
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        clearTemp();
+        setMode("none");
+      }
+      if (event.key === "Enter" && modeRef.current === "poly") {
+        finishPolygon(polyVertsRef.current);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    setTimeout(() => map.invalidateSize(), 100);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (overlayRef.current) {
+      map.removeLayer(overlayRef.current);
+      overlayRef.current = null;
+    }
+    if (!selectedArea || !activeLayer || activeLayer.provider === "none" || activeLayer.provider === "pending") {
+      setLayerStatus("idle");
+      return;
+    }
+
+    const bounds = areaBounds(selectedArea);
+    const imageBounds: L.LatLngBoundsExpression = [
+      [bounds.south, bounds.west],
+      [bounds.north, bounds.east],
+    ];
+    setLayerStatus("loading");
+    const overlay = L.imageOverlay(buildWmsUrl(activeLayer, selectedArea), imageBounds, {
+      opacity: 0.82,
+      interactive: false,
+    });
+    overlay.on("load", () => setLayerStatus("ready"));
+    overlay.on("error", () => setLayerStatus("error"));
+    overlay.addTo(map);
+    overlayRef.current = overlay;
+    const element = overlay.getElement();
+    if (element) element.style.clipPath = polygonClipPath(selectedArea);
+  }, [activeLayer, selectedArea]);
+
+  useEffect(() => {
+    const group = areasLayerRef.current;
+    if (!group) return;
+    group.clearLayers();
+    areas.forEach((area) => {
+      const selected = area.id === selectedAreaId;
+      const polygon = L.polygon(
+        area.poly.map(([longitude, latitude]) => [latitude, longitude]),
+        {
+          color: selected ? "#a3e635" : "#fbbf24",
+          weight: selected ? 3 : 1.5,
+          dashArray: selected ? undefined : "6 4",
+          fillColor: selected ? "#a3e635" : "#fbbf24",
+          fillOpacity: selected ? 0.08 : 0.04,
+        }
+      );
+      polygon.bindTooltip(
+        `<div style="font-weight:600">${area.name}</div><div style="opacity:.75">${area.area_ha.toLocaleString("it-IT")} ha</div>`,
+        { sticky: true }
+      );
+      polygon.on("click", () => {
+        if (modeRef.current === "none") onSelectRef.current(area.id);
+      });
+      polygon.addTo(group);
+    });
+  }, [areas, selectedAreaId]);
+
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded-xl border border-slate-800">
+      <div ref={containerRef} className="h-full w-full bg-slate-950" />
+
+      <div className="absolute left-1/2 top-4 z-[500] flex -translate-x-1/2 items-center gap-1.5">
+        {drawMode === "none" ? (
+          <>
+            <DrawButton onClick={() => setMode("rect")} title="Disegna un rettangolo">
+              <RectangleHorizontal className="h-4 w-4" />
+              <span className="hidden sm:inline">Rettangolo</span>
+            </DrawButton>
+            <DrawButton onClick={() => setMode("poly")} title="Disegna un poligono">
+              <Hexagon className="h-4 w-4" />
+              <span className="hidden sm:inline">Poligono</span>
+            </DrawButton>
+          </>
+        ) : (
+          <div className="flex items-center gap-2 rounded-lg border border-lime-400/40 bg-slate-900/95 px-3 py-2 shadow-lg backdrop-blur">
+            <span className="text-[12px] text-lime-300">
+              {drawMode === "rect"
+                ? "Trascina sulla mappa"
+                : vertCount < 3
+                ? `${vertCount}/3 vertici minimi`
+                : `${vertCount} vertici · doppio clic o ✓`}
+            </span>
+            {drawMode === "poly" && vertCount >= 3 && (
+              <button
+                onClick={() => finishPolygon(polyVertsRef.current)}
+                className="rounded-md bg-lime-400 px-2 py-1 text-[12px] font-bold text-slate-950 hover:bg-lime-300"
+                title="Chiudi il poligono"
+              >
+                ✓ Analizza
+              </button>
+            )}
+            <button
+              onClick={() => {
+                clearTemp();
+                setMode("none");
+              }}
+              className="rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+              title="Annulla"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {selectedArea && activeLayer && activeLayer.provider !== "none" && (
+        <div className="absolute bottom-4 right-4 z-[500] max-w-[260px] rounded-lg border border-slate-700/70 bg-slate-900/95 px-3 py-2 text-[11px] shadow-lg backdrop-blur">
+          <div className="font-semibold text-slate-200">{activeLayer.label}</div>
+          <div className="text-slate-400">{activeLayer.detail}</div>
+          <div className={layerStatusColor(layerStatus)}>
+            {layerStatusLabel(layerStatus, activeLayer.provider)}
+          </div>
+        </div>
+      )}
+
+      <AreaChip area={selectedArea} />
+    </div>
+  );
+}
+
+function polygonClipPath(area: MapArea): string {
+  const bounds = areaBounds(area);
+  const width = bounds.east - bounds.west;
+  const height = bounds.north - bounds.south;
+  const points = area.poly.map(([longitude, latitude]) => {
+    const x = ((longitude - bounds.west) / width) * 100;
+    const y = ((bounds.north - latitude) / height) * 100;
+    return `${x.toFixed(4)}% ${y.toFixed(4)}%`;
+  });
+  return `polygon(${points.join(", ")})`;
+}
+
+function tempStyle(): L.PolylineOptions {
+  return {
+    color: "#a3e635",
+    weight: 2,
+    dashArray: "6 4",
+    fillColor: "#a3e635",
+    fillOpacity: 0.12,
+  };
+}
+
+function DrawButton({
+  children,
+  onClick,
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-2 text-[12px] font-medium text-slate-200 shadow-lg backdrop-blur transition-colors hover:border-lime-400/50 hover:text-lime-300"
+    >
+      {children}
+    </button>
+  );
+}
+
+function AreaChip({ area }: { area?: MapArea }) {
+  if (!area) return null;
+  return (
+    <div className="absolute left-4 top-4 z-[400] max-w-[220px] rounded-lg border border-slate-700/70 bg-slate-900/90 px-3 py-2 shadow-lg backdrop-blur">
+      <div className="truncate text-sm font-semibold text-slate-100">{area.name}</div>
+      <div className="text-[11px] text-slate-400">
+        {area.area_ha.toLocaleString("it-IT", { maximumFractionDigits: 1 })} ha
+      </div>
+    </div>
+  );
+}
+
+function layerStatusLabel(status: LayerStatus, provider: "cdse" | "soilgrids" | "pending"): string {
+  const providerLabel = provider === "soilgrids" ? "SoilGrids" : "CDSE";
+  if (status === "loading") return `Caricamento da ${providerLabel}…`;
+  if (status === "ready") return `Dati ${providerLabel} caricati`;
+  if (status === "error") return "Layer non disponibile per l'intervallo richiesto";
+  return "";
+}
+
+function layerStatusColor(status: LayerStatus): string {
+  if (status === "ready") return "mt-1 text-emerald-300";
+  if (status === "error") return "mt-1 text-rose-300";
+  return "mt-1 text-amber-300";
+}

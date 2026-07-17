@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AppData, FieldData, GeoData, Manifest, Timeseries } from "@/types";
+import type { AppData, GeoData, Manifest, MapArea, Timeseries } from "@/types";
 
 async function loadJson<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -14,12 +14,16 @@ export function useAppData() {
   useEffect(() => {
     Promise.all([
       loadJson<Manifest>("data/manifest.json"),
-      loadJson<FieldData[]>("data/fields.json"),
       loadJson<Timeseries>("data/timeseries.json"),
       loadJson<GeoData>("data/geo.json"),
     ])
-      .then(([manifest, fields, timeseries, geo]) =>
-        setData({ manifest, fields, timeseries, geo })
+      .then(([manifest, timeseries, geo]) =>
+        setData({
+          manifest,
+          fields: [],
+          timeseries: { dates: timeseries.dates, series: {} },
+          geo,
+        })
       )
       .catch((e) => setError(String(e)));
   }, []);
@@ -49,7 +53,7 @@ export function fmt(n: number, digits = 2): string {
   });
 }
 
-export function fieldCentroid(f: FieldData): [number, number] {
+export function fieldCentroid(f: MapArea): [number, number] {
   const lon = f.poly.reduce((s, p) => s + p[0], 0) / f.poly.length;
   const lat = f.poly.reduce((s, p) => s + p[1], 0) / f.poly.length;
   return [lon, lat];

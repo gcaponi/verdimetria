@@ -20,12 +20,15 @@ export interface Insight {
   text: string;
 }
 
-export interface FieldData {
+export interface MapArea {
   id: string;
   name: string;
-  crop: string;
   poly: [number, number][];
   area_ha: number;
+}
+
+export interface FieldData extends MapArea {
+  crop: string;
   n: number;
   p: number;
   k: number;
@@ -39,7 +42,7 @@ export interface FieldData {
   weak_frac: number;
   ratings: Record<RatingKey, string>;
   health: { healthy: number; marginal: number; stressed: number };
-  hist: { counts: number[]; edges: number[] };
+  hist: { counts: number[]; edges: number[] };https://app.sior
   anomaly_mean: number;
   insights: Insight[];
 }
