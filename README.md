@@ -1,4 +1,4 @@
-# Ragusa Geo-Intelligence
+# VerdiMetria
 
 > **Stato al 2026-07-16:** repository di partenza, non prodotto pronto.
 > `src/` contiene un prototipo analitico Python da estrarre e validare su dati reali;
