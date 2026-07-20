@@ -90,7 +90,7 @@ def build_process_request(
     end_date: str,
     *,
     resolution_m: float = 10,
-    target_crs: str = "EPSG:32633",
+    target_crs: str | None = None,
     max_pixels: int = 25_000_000,
     collection: str = "sentinel-2-l2a",
     max_cloud_cover: int = 20,
@@ -106,14 +106,15 @@ def build_process_request(
     if not 0 <= max_cloud_cover <= 100:
         raise ValueError("La copertura nuvolosa deve essere compresa tra 0 e 100")
 
-    dimensions = area.raster_dimensions(resolution_m, target_crs, max_pixels)
-    projected_geometry = mapping(area.projected_geometry(target_crs))
+    metric_crs = target_crs or area.local_utm_crs()
+    dimensions = area.raster_dimensions(resolution_m, metric_crs, max_pixels)
+    projected_geometry = mapping(area.projected_geometry(metric_crs))
 
     return {
         "input": {
             "bounds": {
                 "geometry": projected_geometry,
-                "properties": {"crs": crs_uri(target_crs)},
+                "properties": {"crs": crs_uri(metric_crs)},
             },
             "data": [{
                 "type": collection,
@@ -145,7 +146,7 @@ def fetch_processed_layer(
     end_date: str,
     output_path: str,
     resolution_m: float = 10,
-    target_crs: str = "EPSG:32633",
+    target_crs: str | None = None,
     max_pixels: int = 25_000_000,
     collection: str = "sentinel-2-l2a",  # L2A = corretto atmosfericamente, a differenza del preset "Agriculture" (L1C)
     max_cloud_cover: int = 20,

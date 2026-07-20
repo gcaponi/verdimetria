@@ -1,9 +1,13 @@
 # Verdimetria
 
-> **Stato al 2026-07-16:** repository di partenza, non prodotto pronto.
-> `src/` contiene un prototipo analitico Python da estrarre e validare su dati reali;
-> `V2/` e' una reference UX React basata interamente su dati sintetici.
-> Copernicus, SoilGrids e S.I.T.R. non sono ancora collegati a una pipeline di prodotto.
+> **Stato al 2026-07-18:** vertical slice analitica pubblica e fondazione backend disponibile.
+> `backend/` contiene Django/DRF, auth JWT, PostGIS, `Field` e `BoundaryVersion`;
+> `src/` contiene il core geospaziale e gli adapter CDSE Catalog/Process/Statistical
+> e ISPRA Litologia 1:100.000 validati live.
+> `V2/` e' pubblicata su Cloudflare con Worker `/api/analyze`: Catalog e Statistical
+> CDSE alimentano grafici NDVI reali e DeepSeek V4 Pro genera insight da metriche
+> aggregate. Django/PostGIS resta locale finche' non viene scelto un host container
+> con database PostGIS gestito.
 > Non usare i risultati correnti per diagnosi o prescrizioni agronomiche.
 
 Sistema per leggere in modo integrato dati geologici e agricoli sul
@@ -43,20 +47,36 @@ lo stesso motore.
 
 ## Cosa è stato testato, e cosa no (leggi questo prima di fidarti del codice)
 
-Questo progetto è stato scritto in un ambiente sandboxed con accesso di rete
-limitato a PyPI/GitHub (nessun accesso a Copernicus, ISRIC, geoportale
-siciliano). Quindi:
+✅ **Testato per davvero, gira:** `pytest` passa con 38 test. Sono coperti il
+core raster, `AnalysisArea`, gli adapter CDSE Catalog/Process/Statistical e
+ISPRA, auth,
+tenancy, persistenza PostGIS e versionamento dei confini. Process e Statistical
+API, Catalog STAC e ISPRA WFS sono stati chiamati live su AOI tecnici siciliani.
+La stessa pipeline Catalog + Statistical + DeepSeek e' stata validata sul dominio
+production, inclusi disegno campo, due grafici Recharts e AI con provenance.
 
-✅ **Testato per davvero, gira** (vedi `demo/run_synthetic_demo.py`):
-il motore core (`raster_stack.py`), il modulo geologico, il modulo agricolo,
-l'esportazione della mappa — tutto con dati sintetici ma georeferenziati
-realmente sul bounding box di Ragusa. `pytest tests/` passa (4/4).
+⚠️ **Ancora da validare o consolidare:** SoilGrids quantitativo, Copernicus DEM
+e S.I.T.R. regionale. Il primo run end-to-end deve usare un campo reale
+autorizzato e risultati validati da chi conosce il campo.
 
-⚠️ **Scritto secondo la documentazione ufficiale, MAI chiamato dal vivo**:
-i tre moduli in `src/ingestion/` (SoilGrids, Sentinel-2/CDSE, Geoportale
-Sicilia). Sono corretti sulla carta, ma la prima esecuzione reale la farai
-tu: aspettati di dover aggiustare qualche dettaglio (nomi esatti dei layer
-WMS, formato bbox richiesto dal server WCS, ecc.).
+La Carta Litologica ISPRA e' un **contesto nazionale 1:100.000**, non una misura
+del terreno: gli attributi sono dichiarati dal provider ancora in validazione.
+L'adapter conserva fonte, scala e licenza CC BY 4.0 e filtra sul Polygon reale.
+
+## Prova online
+
+Apri [verdimetria.cais.uno](https://verdimetria.cais.uno/). All'avvio viene
+selezionata una AOI tecnica dimostrativa a Ragusa con dati satellitari reali.
+Puoi:
+
+- disegnare un rettangolo o un Polygon e avviare una nuova analisi;
+- consultare scene Catalog, serie NDVI annuale e percentili dell'ultima data;
+- aprire i due grafici nella tab **Vegetazione**;
+- leggere tre insight nella tab **AI Insights**, con provider, modello ed evidenze;
+- ispezionare layer WMS CDSE, SoilGrids e meteo.
+
+L'API edge espone `GET /api/health` e `POST /api/analyze`. Le credenziali CDSE e
+DeepSeek sono secret cifrati Cloudflare e non vengono inviate al browser.
 
 ## Il modulo WMS via Configuration Instance (verdimetria)
 
@@ -95,14 +115,42 @@ pip install -r requirements.txt
 cp .env.example .env       # poi riempi CDSE_CLIENT_ID / CDSE_CLIENT_SECRET
 ```
 
-Registrazioni gratuite necessarie per i dati reali:
+### Backend locale
+
+```bash
+docker compose up -d --wait db redis
+python manage.py migrate
+python manage.py runserver
+```
+
+Servizi locali: API `http://127.0.0.1:8000/api/v1/`, PostGIS su `5433` e
+Redis su `6380`, entrambi in ascolto solo su localhost. Endpoint iniziali:
+
+- `POST /api/v1/auth/register/` - account email-first;
+- `POST /api/v1/auth/token/` e `POST /api/v1/auth/token/refresh/` - JWT;
+- `GET|POST /api/v1/fields/` - elenco tenant-scoped e creazione campo;
+- `POST /api/v1/fields/{id}/boundaries/` - nuova versione del confine.
+
+Il payload di creazione campo usa `name` e `boundary` GeoJSON. Sono accettati
+solo Polygon/MultiPolygon WGS84 validi; superficie e CRS UTM locale vengono
+calcolati server-side e il confine viene normalizzato in PostGIS.
+
+Provider iniziali per i dati reali:
 - **Copernicus Data Space Ecosystem** (Sentinel-2, DEM): https://dataspace.copernicus.eu/
 - **Geoportale S.I.T.R. Sicilia**: nessuna registrazione per WMS/WFS pubblici, esplora il catalogo su https://www.sitr.regione.sicilia.it/geoportale/it/home/servicecatalog
+- **ISPRA Carta Litologica 1:100.000**: WMS/WFS pubblico scoped su
+  `https://sgi2.isprambiente.it/geoserver/ge-core8/ows`, CC BY 4.0 salvo
+  eccezioni specifiche, attribuzione e URL obbligatori.
 - **SoilGrids**: nessuna registrazione, ma nota che l'API REST a punti è
   attualmente sospesa da ISRIC — il modulo usa la via WCS (raster), che è
   comunque quella giusta per la nostra architettura a stack.
 
-## Prova subito (senza credenziali, senza dati reali)
+Il prodotto non e' vincolato alle fonti gratuite. `.env.example` include anche
+gli slot per Planet, UP42, Vantor, OpenTopography OT+, Meteomatics, MapTiler,
+object storage S3/R2, DeepSeek V4 Pro, Postmark, Stripe e Sentry. Ogni provider
+premium va attivato solo dopo contratto, EULA e costo per ettaro misurato.
+
+## Demo sintetica locale
 
 ```bash
 python -m demo.run_synthetic_demo
@@ -125,6 +173,8 @@ src/
     sicilia_geoportale.py      - WMS/WFS via owslib
     soilgrids_client.py        - proprietà del suolo via WCS
     sentinel2_cdse.py          - Sentinel-2 via Copernicus Data Space Ecosystem (STAC+OAuth, scene grezze)
+    catalog_api.py             - ricerca STAC Polygon-first, cloud filter e paginazione
+    ispra_lithology.py         - contesto litologico 1:100.000 WFS, filtro Polygon e provenance
     sentinel_hub_wms.py        - layer già processati (NDVI, Agricoltura, Geologia...) via la
                                   tua Configuration Instance "verdimetria" (Instance ID incluso)
     process_api.py             - CONSIGLIATO per dati quantitativi: Process API con evalscript
@@ -136,14 +186,13 @@ tests/test_raster_stack.py     - test del motore core
 
 ## Prossimi passi realistici
 
-1. Sostituisci il bounding box approssimativo in `config.py` con un confine
-   amministrativo reale (ISTAT).
-2. Registrati su CDSE e prova `sentinel2_cdse.py` per scaricare 2-3 scene
-   reali su Ragusa.
-3. Esplora il catalogo del Geoportale S.I.T.R. per trovare i nomi esatti dei
-   layer geologici che ti servono (litologia, geositi...).
-4. Rilancia `demo/run_synthetic_demo.py` sostituendo via via i file sintetici
-   con quelli reali in `data/raw/` — la pipeline core non cambia.
-5. Qualsiasi anomalia o zona debole emerga, trattala come **ipotesi da
-   validare** (con un geologo per il modulo geo, con un'analisi di
-   laboratorio per il modulo agro) — non come una conclusione.
+1. Collegare il disegno mappa a `POST /api/v1/fields/` e correggere il conflitto
+  touch tra drawing e pan su mobile.
+2. Aggiungere `AnalysisJob` idempotente e worker Celery, riusando Catalog,
+  Process, Statistical e ISPRA gia' validati.
+3. Ottenere il confine di un campo reale autorizzato e chiudere la Fase 0 con
+  una validazione agronomica esplicita.
+4. Validare SoilGrids, Copernicus DEM e S.I.T.R.; mantenere ISPRA come contesto
+  1:100.000 e aggiungere analisi di laboratorio/ground truth per decisioni reali.
+5. Alimentare grafici e AI Insights solo da metriche backend con provenienza,
+  quality score e limiti dichiarati.

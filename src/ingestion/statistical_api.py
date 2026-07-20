@@ -43,7 +43,7 @@ def build_statistical_request(
     *,
     aggregation_interval: str = "P10D",
     resolution_m: float = 10,
-    target_crs: str = "EPSG:32633",
+    target_crs: str | None = None,
     max_pixels: int = 25_000_000,
     collection: str = "sentinel-2-l2a",
     max_cloud_cover: int = 20,
@@ -67,14 +67,15 @@ def build_statistical_request(
     if last_interval_behavior not in {"SKIP", "SHORTEN", "EXTEND"}:
         raise ValueError("Il comportamento dell'ultimo intervallo non e' valido")
 
-    area.raster_dimensions(resolution_m, target_crs, max_pixels)
-    projected_geometry = mapping(area.projected_geometry(target_crs))
+    metric_crs = target_crs or area.local_utm_crs()
+    area.raster_dimensions(resolution_m, metric_crs, max_pixels)
+    projected_geometry = mapping(area.projected_geometry(metric_crs))
 
     return {
         "input": {
             "bounds": {
                 "geometry": projected_geometry,
-                "properties": {"crs": crs_uri(target_crs)},
+                "properties": {"crs": crs_uri(metric_crs)},
             },
             "data": [{
                 "type": collection,

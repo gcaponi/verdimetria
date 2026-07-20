@@ -17,9 +17,20 @@ requests==2.33.1        # WMS via Configuration Instance Sentinel Hub
 requests-oauthlib==2.0.0 # OAuth per la Process API (dati quantitativi puliti)
 oauthlib==3.2.2
 
+# Backend web e persistenza
+Django==6.0.7
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.5.1
+django-cors-headers==4.9.0
+psycopg[binary]==3.3.4
+python-dotenv==1.2.2
+celery==5.6.3
+redis==8.0.1
+
 # Visualizzazione
 folium==0.20.0
 matplotlib==3.10.8
 
 # Test
 pytest==9.1.1
+pytest-django==4.12.0

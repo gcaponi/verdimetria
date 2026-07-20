@@ -59,6 +59,14 @@ class AnalysisArea:
     def to_geojson(self) -> GeoJsonGeometry:
         return mapping(self.geometry)
 
+    def local_utm_crs(self) -> str:
+        centroid = self.geometry.centroid
+        if not -80 <= centroid.y <= 84:
+            raise ValueError("La geometria e' fuori dalla copertura UTM")
+        zone = min(60, max(1, int((centroid.x + 180) // 6) + 1))
+        hemisphere_base = 32600 if centroid.y >= 0 else 32700
+        return f"EPSG:{hemisphere_base + zone}"
+
     def projected_geometry(self, target_crs: str) -> Polygon | MultiPolygon:
         transformer = Transformer.from_crs("EPSG:4326", target_crs, always_xy=True)
         projected = transform(transformer.transform, self.geometry)

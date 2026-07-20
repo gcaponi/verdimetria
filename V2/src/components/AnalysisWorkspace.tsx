@@ -1,19 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  CalendarRange,
+  AlertCircle,
   CheckCircle2,
   CloudSun,
-  Database,
   FlaskConical,
   Leaf,
   LayoutDashboard,
   LockKeyhole,
   Mountain,
+  RefreshCw,
   Satellite,
   Sparkles,
   Sprout,
 } from "lucide-react";
 import WeatherSection from "@/sections/WeatherSection";
+import VegetationCharts from "@/sections/VegetationCharts";
+import RealInsightsSection from "@/sections/RealInsightsSection";
+import { analyzeArea } from "@/lib/analysis";
+import type { AnalysisStatus, FieldAnalysis } from "@/lib/analysis";
 import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
 import { cn } from "@/lib/utils";
@@ -43,6 +47,38 @@ export default function AnalysisWorkspace({
   onLayerChange,
 }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [requestVersion, setRequestVersion] = useState(0);
+  const requestKey = `${area.id}:${requestVersion}:${area.poly.length}`;
+  const [analysisState, setAnalysisState] = useState<{
+    key: string;
+    analysis: FieldAnalysis | null;
+    status: AnalysisStatus;
+    error: string | null;
+  }>({ key: requestKey, analysis: null, status: "loading", error: null });
+  const currentState = analysisState.key === requestKey
+    ? analysisState
+    : { key: requestKey, analysis: null, status: "loading" as const, error: null };
+  const analysis = currentState.analysis;
+  const analysisStatus = currentState.status;
+  const analysisError = currentState.error;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    analyzeArea(area, controller.signal)
+      .then((result) => {
+        setAnalysisState({ key: requestKey, analysis: result, status: "ready", error: null });
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setAnalysisState({
+          key: requestKey,
+          analysis: null,
+          status: "error",
+          error: error instanceof Error ? error.message : "Analisi non disponibile",
+        });
+      });
+    return () => controller.abort();
+  }, [area, requestKey]);
 
   return (
     <section className="border-y border-slate-800">
@@ -74,7 +110,13 @@ export default function AnalysisWorkspace({
       </nav>
 
       <div className="py-5">
-        {activeTab === "overview" && <Overview area={area} />}
+        <AnalysisRunStatus
+          status={analysisStatus}
+          analysis={analysis}
+          error={analysisError}
+          onRetry={() => setRequestVersion((version) => version + 1)}
+        />
+        {activeTab === "overview" && <Overview area={area} analysis={analysis} status={analysisStatus} />}
         {activeTab === "soil" && (
           <SoilAnalysis
             layers={layers}
@@ -87,6 +129,10 @@ export default function AnalysisWorkspace({
             layers={layers}
             activeLayerId={activeLayerId}
             onLayerChange={onLayerChange}
+            analysis={analysis}
+            status={analysisStatus}
+            error={analysisError}
+            onRetry={() => setRequestVersion((version) => version + 1)}
           />
         )}
         {activeTab === "geology" && (
@@ -96,19 +142,46 @@ export default function AnalysisWorkspace({
             onLayerChange={onLayerChange}
           />
         )}
-        {activeTab === "insights" && <InsightsAnalysis />}
+        {activeTab === "insights" && (
+          <InsightsAnalysis
+            analysis={analysis}
+            status={analysisStatus}
+            error={analysisError}
+            onRetry={() => setRequestVersion((version) => version + 1)}
+          />
+        )}
         {activeTab === "weather" && <WeatherSection field={area} />}
       </div>
     </section>
   );
 }
 
-function Overview({ area }: { area: MapArea }) {
+function Overview({
+  area,
+  analysis,
+  status,
+}: {
+  area: MapArea;
+  analysis: FieldAnalysis | null;
+  status: AnalysisStatus;
+}) {
   const metrics = [
     { label: "Superficie", value: `${formatArea(area.area_ha)} ha`, detail: "calcolata dal confine" },
-    { label: "Vertici", value: String(area.poly.length), detail: "geometria acquisita" },
-    { label: "Meteo", value: "Live", detail: "Open-Meteo sul centroide" },
-    { label: "Analisi zonali", value: "In attesa", detail: "endpoint backend non esposto" },
+    {
+      label: "Scene Sentinel-2",
+      value: analysis ? String(analysis.catalog.sceneCount) : status === "loading" ? "..." : "n/d",
+      detail: "Catalog API · cloud <= 30%",
+    },
+    {
+      label: "NDVI corrente",
+      value: analysis?.vegetation.current?.toLocaleString("it-IT", { maximumFractionDigits: 3 }) ?? (status === "loading" ? "..." : "n/d"),
+      detail: "Statistical API · pixel validi",
+    },
+    {
+      label: "Interpretazione",
+      value: analysis ? (analysis.ai.status === "generated" ? "AI" : "Regole") : status === "loading" ? "..." : "n/d",
+      detail: analysis?.ai.model ?? "in elaborazione",
+    },
   ];
 
   return (
@@ -116,7 +189,7 @@ function Overview({ area }: { area: MapArea }) {
       <SectionHeading
         eyebrow="Stato del campo"
         title={`Panoramica — ${area.name}`}
-        detail="Questa vista mostra solo dati effettivamente disponibili nel prototipo nazionale."
+        detail="Geometria, scene, statistiche e interpretazione provengono dalla pipeline online sul Polygon selezionato."
       />
       <div className="grid gap-px overflow-hidden rounded-lg border border-slate-800 bg-slate-800 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map((metric) => (
@@ -132,13 +205,13 @@ function Overview({ area }: { area: MapArea }) {
           icon={CheckCircle2}
           tone="live"
           title="Disponibile ora"
-          items={["Confine e superficie", "Meteo live", "Layer visuali CDSE", "Proprietà SoilGrids 250 m"]}
+          items={["Confine e superficie", "Catalog Sentinel-2", "Serie NDVI quantitativa", "AI con evidenze e provenance"]}
         />
         <StatusPanel
           icon={LockKeyhole}
           tone="pending"
-          title="Richiede backend"
-          items={["Statistiche NDVI zonali", "Serie storica e debolezza", "Anomaly detection e PCA", "Interpretazione AI"]}
+          title="Richiede validazione campo"
+          items={["Ground truth e laboratorio", "Diagnosi cause agronomiche", "Prescrizioni", "Validazione professionista"]}
         />
       </div>
     </div>
@@ -180,7 +253,11 @@ function VegetationAnalysis({
   layers,
   activeLayerId,
   onLayerChange,
-}: Omit<Props, "area">) {
+  analysis,
+  status,
+  error,
+  onRetry,
+}: Omit<Props, "area"> & AnalysisResultProps) {
   const vegetationIds = new Set(["NDVI", "EVI", "SAVI", "NDWI", "AGRICULTURE"]);
   const vegetationLayers = layers.filter((layer) => vegetationIds.has(layer.id));
   return (
@@ -188,23 +265,16 @@ function VegetationAnalysis({
       <SectionHeading
         eyebrow="Sentinel-2 · Copernicus Data Space"
         title="Vegetazione e umidità"
-        detail="I preset WMS sono attivi per l'ispezione visuale; le misure NDVI richiedono la Process e Statistical API lato server."
+        detail="I preset WMS supportano l'ispezione; i grafici usano Statistical API su Sentinel-2 L2A con masking qualità."
       />
       <LayerGrid
         layers={vegetationLayers}
         activeLayerId={activeLayerId}
         onLayerChange={onLayerChange}
       />
-      <EmptyAnalysis
-        icon={CalendarRange}
-        title="Andamento NDVI"
-        detail="La pipeline Statistical API è stata validata live, ma il browser non può ricevere le credenziali OAuth. Il grafico attende l'endpoint autenticato che restituisca la serie del campo."
-      />
-      <EmptyAnalysis
-        icon={Database}
-        title="Distribuzione e debolezza cronica"
-        detail="Istogramma, percentili e zone persistentemente deboli saranno calcolati sui pixel reali della serie, non su una distribuzione sintetica."
-      />
+      <AnalysisResult status={status} analysis={analysis} error={error} onRetry={onRetry}>
+        {(result) => <VegetationCharts analysis={result} />}
+      </AnalysisResult>
     </div>
   );
 }
@@ -245,19 +315,84 @@ function GeologyAnalysis({
   );
 }
 
-function InsightsAnalysis() {
+function InsightsAnalysis({ analysis, status, error, onRetry }: AnalysisResultProps) {
   return (
     <div className="space-y-5">
       <SectionHeading
         eyebrow="Interpretazione assistita"
         title="AI Insights"
-        detail="Gli insight vengono generati solo dopo avere statistiche reali, provenienza e indicatori di confidenza."
+        detail="Il modello riceve solo statistiche CDSE aggregate e deve citare le evidenze usate."
       />
-      <EmptyAnalysis
-        icon={Sparkles}
-        title="Nessun insight ancora generato"
-        detail="Il prototipo precedente usava testi costruiti su misure sintetiche. Questa versione attende gli output quantitativi del backend prima di formulare diagnosi o raccomandazioni."
-      />
+      <AnalysisResult status={status} analysis={analysis} error={error} onRetry={onRetry}>
+        {(result) => <RealInsightsSection analysis={result} />}
+      </AnalysisResult>
+    </div>
+  );
+}
+
+interface AnalysisResultProps {
+  analysis: FieldAnalysis | null;
+  status: AnalysisStatus;
+  error: string | null;
+  onRetry: () => void;
+}
+
+function AnalysisRunStatus({ status, analysis, error, onRetry }: AnalysisResultProps) {
+  return (
+    <div className="mb-5 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-slate-800 bg-slate-900/50 px-4 py-3 text-[11px]">
+      <div className="flex items-center gap-2">
+        {status === "loading" ? (
+          <RefreshCw className="h-4 w-4 animate-spin text-cyan-300" />
+        ) : status === "ready" ? (
+          <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+        ) : (
+          <AlertCircle className="h-4 w-4 text-rose-300" />
+        )}
+        <span className="text-slate-300">
+          {status === "loading"
+            ? "Analisi reale in corso: Catalog + Statistical + AI"
+            : status === "ready" && analysis
+              ? `${analysis.vegetation.validObservations} intervalli validi · ${analysis.catalog.sceneCount} scene · ${analysis.ai.status === "generated" ? "AI generata" : "fallback trasparente"}`
+              : error ?? "Analisi non disponibile"}
+        </span>
+      </div>
+      {status === "error" && (
+        <button type="button" onClick={onRetry} className="flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200">
+          <RefreshCw className="h-3.5 w-3.5" /> Riprova
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AnalysisResult({
+  status,
+  analysis,
+  error,
+  onRetry,
+  children,
+}: AnalysisResultProps & { children: (analysis: FieldAnalysis) => React.ReactNode }) {
+  if (status === "ready" && analysis) return children(analysis);
+  if (status === "error") {
+    return (
+      <div className="flex min-h-40 items-center justify-between gap-4 border border-rose-400/30 bg-rose-400/5 p-5">
+        <div>
+          <h3 className="text-sm font-semibold text-rose-200">Analisi non completata</h3>
+          <p className="mt-1 text-[12px] text-slate-400">{error}</p>
+        </div>
+        <button type="button" onClick={onRetry} className="shrink-0 border border-slate-700 px-3 py-2 text-[11px] text-slate-200 hover:border-rose-300/50">
+          Riprova
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-h-40 items-center gap-4 border border-dashed border-cyan-400/30 bg-cyan-400/5 p-5">
+      <RefreshCw className="h-5 w-5 animate-spin text-cyan-300" />
+      <div>
+        <h3 className="text-sm font-semibold text-slate-200">Elaborazione del Polygon</h3>
+        <p className="mt-1 text-[12px] text-slate-500">Ricerca scene, statistiche NDVI e interpretazione AI in corso.</p>
+      </div>
     </div>
   );
 }

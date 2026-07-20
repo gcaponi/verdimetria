@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "@geoman-io/leaflet-geoman-free";
+import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import { areaBounds, buildWmsUrl } from "@/lib/wms";
 import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
-import { ChevronDown, Hexagon, RectangleHorizontal, X } from "lucide-react";
+import { Check, ChevronDown, Hexagon, RectangleHorizontal, X } from "lucide-react";
 
 interface Props {
   areas: MapArea[];
@@ -28,56 +30,91 @@ export default function MapPanelNational({
   const mapRef = useRef<L.Map | null>(null);
   const overlayRef = useRef<L.ImageOverlay | null>(null);
   const areasLayerRef = useRef<L.LayerGroup | null>(null);
-  const tempRef = useRef<L.Layer | null>(null);
+  const draftLayerRef = useRef<L.Polygon | null>(null);
+  const fittedAreaRef = useRef<string | null>(null);
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
-  const [vertCount, setVertCount] = useState(0);
-  const [layerStatus, setLayerStatus] = useState<LayerStatus>("idle");
+  const [hasDraft, setHasDraft] = useState(false);
+  const [overlayState, setOverlayState] = useState<{ key: string | null; status: LayerStatus }>({
+    key: null,
+    status: "idle",
+  });
 
   const modeRef = useRef<DrawMode>("none");
-  const rectStartRef = useRef<L.LatLng | null>(null);
-  const polyVertsRef = useRef<L.LatLng[]>([]);
-  const onSelectRef = useRef(onSelectArea);
-  const onCustomRef = useRef(onCustomArea);
-  onSelectRef.current = onSelectArea;
-  onCustomRef.current = onCustomArea;
+  const selectArea = useEffectEvent(onSelectArea);
 
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
+  const overlayKey = selectedArea && activeLayer.provider !== "none" && activeLayer.provider !== "pending"
+    ? `${selectedArea.id}:${activeLayer.id}`
+    : null;
+  const layerStatus = overlayState.key === overlayKey
+    ? overlayState.status
+    : overlayKey
+      ? "loading"
+      : "idle";
 
   const setMode = (mode: DrawMode) => {
-    modeRef.current = mode;
-    setDrawMode(mode);
     const map = mapRef.current;
-    if (!map) return;
-    if (mode !== "none") {
-      map.doubleClickZoom.disable();
-      if (containerRef.current) containerRef.current.style.cursor = "crosshair";
-    } else {
-      map.doubleClickZoom.enable();
-      map.dragging.enable();
-      if (containerRef.current) containerRef.current.style.cursor = "";
+    const container = containerRef.current;
+    if (!map || !container || hasDraft) return;
+
+    map.pm.disableDraw();
+    const nextMode = modeRef.current === mode ? "none" : mode;
+    modeRef.current = nextMode;
+    setDrawMode(nextMode);
+    if (nextMode === "none") {
+      restoreMapNavigation(map, container);
+      return;
     }
+
+    map.dragging.disable();
+    map.touchZoom.disable();
+    map.doubleClickZoom.disable();
+    map.scrollWheelZoom.disable();
+    container.style.cursor = "crosshair";
+    map.pm.enableDraw(nextMode === "rect" ? "Rectangle" : "Polygon", {
+      allowSelfIntersection: false,
+      finishOnEnter: true,
+      hintlineStyle: tempStyle(),
+      pathOptions: tempStyle(),
+      snapDistance: 24,
+      snappable: true,
+      templineStyle: tempStyle(),
+      tooltips: true,
+    });
   };
 
-  const clearTemp = () => {
+  const cancelDrawing = () => {
     const map = mapRef.current;
-    if (map && tempRef.current) {
-      map.removeLayer(tempRef.current);
-      tempRef.current = null;
+    const container = containerRef.current;
+    if (map) {
+      map.pm.disableDraw();
+      if (draftLayerRef.current) {
+        draftLayerRef.current.pm.disable();
+        map.removeLayer(draftLayerRef.current);
+      }
+      if (container) restoreMapNavigation(map, container);
     }
-    rectStartRef.current = null;
-    polyVertsRef.current = [];
-    setVertCount(0);
+    draftLayerRef.current = null;
+    modeRef.current = "none";
+    setDrawMode("none");
+    setHasDraft(false);
   };
+  const cancelDrawingFromEffect = useEffectEvent(cancelDrawing);
 
-  const finishPolygon = (vertices: L.LatLng[]) => {
-    if (vertices.length < 3) return;
-    const coordinates: [number, number][] = vertices.map((vertex) => [
-      Math.round(vertex.lng * 100000) / 100000,
-      Math.round(vertex.lat * 100000) / 100000,
-    ]);
-    clearTemp();
-    setMode("none");
-    onCustomRef.current(coordinates);
+  const confirmDraft = () => {
+    const map = mapRef.current;
+    const container = containerRef.current;
+    const layer = draftLayerRef.current;
+    if (!map || !container || !layer) return;
+    const coordinates = draftCoordinates(layer);
+    if (coordinates.length < 3) return;
+
+    layer.pm.disable();
+    map.removeLayer(layer);
+    restoreMapNavigation(map, container);
+    draftLayerRef.current = null;
+    setHasDraft(false);
+    onCustomArea(coordinates);
   };
 
   useEffect(() => {
@@ -101,57 +138,56 @@ export default function MapPanelNational({
     mapRef.current = map;
     areasLayerRef.current = L.layerGroup().addTo(map);
 
-    map.on("mousedown", (event: L.LeafletMouseEvent) => {
-      if (modeRef.current !== "rect") return;
-      map.dragging.disable();
-      rectStartRef.current = event.latlng;
-      if (tempRef.current) map.removeLayer(tempRef.current);
-      tempRef.current = L.rectangle(
-        L.latLngBounds(event.latlng, event.latlng),
-        tempStyle()
-      ).addTo(map);
-    });
-    map.on("mousemove", (event: L.LeafletMouseEvent) => {
-      if (modeRef.current === "rect" && rectStartRef.current && tempRef.current) {
-        (tempRef.current as L.Rectangle).setBounds(
-          L.latLngBounds(rectStartRef.current, event.latlng)
-        );
+    const handleCreate: L.PM.CreateEventHandler = ({ layer }) => {
+      if (!(layer instanceof L.Polygon)) {
+        map.removeLayer(layer);
+        return;
       }
-    });
-    map.on("mouseup", (event: L.LeafletMouseEvent) => {
-      if (modeRef.current !== "rect" || !rectStartRef.current) return;
-      const start = rectStartRef.current;
-      map.dragging.enable();
-      finishPolygon([
-        L.latLng(start.lat, start.lng),
-        L.latLng(start.lat, event.latlng.lng),
-        L.latLng(event.latlng.lat, event.latlng.lng),
-        L.latLng(event.latlng.lat, start.lng),
-      ]);
-    });
-    map.on("click", (event: L.LeafletMouseEvent) => {
-      if (modeRef.current !== "poly") return;
-      polyVertsRef.current.push(event.latlng);
-      setVertCount(polyVertsRef.current.length);
-      if (tempRef.current) map.removeLayer(tempRef.current);
-      tempRef.current = L.polygon(polyVertsRef.current, tempStyle()).addTo(map);
-    });
-    map.on("dblclick", () => {
-      if (modeRef.current === "poly") finishPolygon(polyVertsRef.current);
-    });
+
+      map.pm.disableDraw();
+      restoreMapNavigation(map, containerRef.current!);
+      modeRef.current = "none";
+      setDrawMode("none");
+      draftLayerRef.current = layer;
+      layer.setStyle(tempStyle());
+      layer.pm.enable({
+        allowSelfIntersection: false,
+        allowSelfIntersectionEdit: false,
+        draggable: false,
+        removeLayerBelowMinVertexCount: false,
+        snapDistance: 24,
+        snappable: true,
+      });
+      setHasDraft(true);
+    };
+    map.on("pm:create", handleCreate);
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        clearTemp();
-        setMode("none");
-      }
-      if (event.key === "Enter" && modeRef.current === "poly") {
-        finishPolygon(polyVertsRef.current);
+        cancelDrawingFromEffect();
       }
     };
     window.addEventListener("keydown", onKey);
+    let resizeFrame = 0;
+    const resizeObserver = new ResizeObserver(() => {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        map.invalidateSize({ animate: false, pan: false });
+      });
+    });
+    resizeObserver.observe(containerRef.current);
     setTimeout(() => map.invalidateSize(), 100);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      resizeObserver.disconnect();
+      cancelAnimationFrame(resizeFrame);
+      map.off("pm:create", handleCreate);
+      map.pm.disableDraw();
+      map.remove();
+      mapRef.current = null;
+      areasLayerRef.current = null;
+      draftLayerRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -161,28 +197,24 @@ export default function MapPanelNational({
       map.removeLayer(overlayRef.current);
       overlayRef.current = null;
     }
-    if (!selectedArea || !activeLayer || activeLayer.provider === "none" || activeLayer.provider === "pending") {
-      setLayerStatus("idle");
-      return;
-    }
+    if (!selectedArea || !overlayKey) return;
 
     const bounds = areaBounds(selectedArea);
     const imageBounds: L.LatLngBoundsExpression = [
       [bounds.south, bounds.west],
       [bounds.north, bounds.east],
     ];
-    setLayerStatus("loading");
     const overlay = L.imageOverlay(buildWmsUrl(activeLayer, selectedArea), imageBounds, {
       opacity: 0.82,
       interactive: false,
     });
-    overlay.on("load", () => setLayerStatus("ready"));
-    overlay.on("error", () => setLayerStatus("error"));
+    overlay.on("load", () => setOverlayState({ key: overlayKey, status: "ready" }));
+    overlay.on("error", () => setOverlayState({ key: overlayKey, status: "error" }));
     overlay.addTo(map);
     overlayRef.current = overlay;
     const element = overlay.getElement();
     if (element) element.style.clipPath = polygonClipPath(selectedArea);
-  }, [activeLayer, selectedArea]);
+  }, [activeLayer, overlayKey, selectedArea]);
 
   useEffect(() => {
     const group = areasLayerRef.current;
@@ -205,18 +237,53 @@ export default function MapPanelNational({
         { sticky: true }
       );
       polygon.on("click", () => {
-        if (modeRef.current === "none") onSelectRef.current(area.id);
+        if (modeRef.current === "none") selectArea(area.id);
       });
       polygon.addTo(group);
     });
   }, [areas, selectedAreaId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !selectedArea || fittedAreaRef.current === selectedArea.id) return;
+    const bounds = areaBounds(selectedArea);
+    map.fitBounds(
+      L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]),
+      { padding: [36, 36], maxZoom: 15 },
+    );
+    fittedAreaRef.current = selectedArea.id;
+  }, [selectedArea]);
 
   return (
     <div className="relative isolate z-0 h-full w-full overflow-hidden rounded-xl border border-slate-800">
       <div ref={containerRef} className="h-full w-full bg-slate-950" />
 
       <div className="absolute left-1/2 top-4 z-[500] flex -translate-x-1/2 items-center gap-1.5">
-        {drawMode === "none" ? (
+        {hasDraft ? (
+          <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-lg border border-lime-400/40 bg-slate-900/95 p-1.5 pl-3 shadow-lg backdrop-blur">
+            <span className="min-w-0 text-[12px] font-medium text-lime-300">
+              Regola i vertici, poi conferma
+            </span>
+            <button
+              type="button"
+              onClick={confirmDraft}
+              className="flex h-11 shrink-0 items-center gap-1.5 rounded-md bg-lime-400 px-3 text-[12px] font-bold text-slate-950 hover:bg-lime-300"
+              title="Conferma il confine"
+            >
+              <Check className="h-4 w-4" />
+              Conferma
+            </button>
+            <button
+              type="button"
+              onClick={cancelDrawing}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-white"
+              title="Annulla il disegno"
+              aria-label="Annulla il disegno"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ) : drawMode === "none" ? (
           <>
             <DrawButton onClick={() => setMode("rect")} title="Disegna un rettangolo">
               <RectangleHorizontal className="h-4 w-4" />
@@ -231,27 +298,15 @@ export default function MapPanelNational({
           <div className="flex items-center gap-2 rounded-lg border border-lime-400/40 bg-slate-900/95 px-3 py-2 shadow-lg backdrop-blur">
             <span className="text-[12px] text-lime-300">
               {drawMode === "rect"
-                ? "Trascina sulla mappa"
-                : vertCount < 3
-                ? `${vertCount}/3 vertici minimi`
-                : `${vertCount} vertici · doppio clic o ✓`}
+                ? "Indica i due angoli"
+                : "Tocca i vertici · chiudi sul primo"}
             </span>
-            {drawMode === "poly" && vertCount >= 3 && (
-              <button
-                onClick={() => finishPolygon(polyVertsRef.current)}
-                className="rounded-md bg-lime-400 px-2 py-1 text-[12px] font-bold text-slate-950 hover:bg-lime-300"
-                title="Chiudi il poligono"
-              >
-                ✓ Analizza
-              </button>
-            )}
             <button
-              onClick={() => {
-                clearTemp();
-                setMode("none");
-              }}
-              className="rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
-              title="Annulla"
+              type="button"
+              onClick={cancelDrawing}
+              className="flex h-11 w-11 items-center justify-center rounded-md text-slate-400 hover:bg-slate-800 hover:text-white"
+              title="Annulla il disegno"
+              aria-label="Annulla il disegno"
             >
               <X className="h-4 w-4" />
             </button>
@@ -297,6 +352,24 @@ function tempStyle(): L.PolylineOptions {
   };
 }
 
+function draftCoordinates(layer: L.Polygon): [number, number][] {
+  const latLngs = layer.getLatLngs();
+  const firstRing = latLngs[0];
+  if (!Array.isArray(firstRing) || firstRing.length === 0 || Array.isArray(firstRing[0])) return [];
+  return (firstRing as L.LatLng[]).map((vertex) => [
+    Math.round(vertex.lng * 100000) / 100000,
+    Math.round(vertex.lat * 100000) / 100000,
+  ]);
+}
+
+function restoreMapNavigation(map: L.Map, container: HTMLDivElement) {
+  map.dragging.enable();
+  map.touchZoom.enable();
+  map.doubleClickZoom.enable();
+  map.scrollWheelZoom.enable();
+  container.style.cursor = "";
+}
+
 function DrawButton({
   children,
   onClick,
@@ -308,9 +381,10 @@ function DrawButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       title={title}
-      className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-2 text-[12px] font-medium text-slate-200 shadow-lg backdrop-blur transition-colors hover:border-lime-400/50 hover:text-lime-300"
+      className="flex h-11 items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900/95 px-3 text-[12px] font-medium text-slate-200 shadow-lg backdrop-blur transition-colors hover:border-lime-400/50 hover:text-lime-300"
     >
       {children}
     </button>

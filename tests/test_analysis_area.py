@@ -21,12 +21,24 @@ def test_analysis_area_preserves_polygon_and_computes_metric_values():
     area = AnalysisArea.from_geojson("Campo pilota", FIELD_POLYGON)
 
     assert area.to_geojson()["type"] == "Polygon"
+    assert area.local_utm_crs() == "EPSG:32633"
     assert area.area_hectares("EPSG:32633") > 0
 
     dimensions = area.raster_dimensions(10, "EPSG:32633")
     assert dimensions.width > 0
     assert dimensions.height > 0
     assert dimensions.pixel_count == dimensions.width * dimensions.height
+
+
+def test_analysis_area_selects_the_local_utm_zone():
+    north_west_field: dict[str, Any] = {
+        "type": "Polygon",
+        "coordinates": [[[7.67, 45.06], [7.68, 45.06], [7.68, 45.07], [7.67, 45.07], [7.67, 45.06]]],
+    }
+
+    area = AnalysisArea.from_geojson("Campo Piemonte", north_west_field)
+
+    assert area.local_utm_crs() == "EPSG:32632"
 
 
 def test_analysis_area_accepts_multipolygon():

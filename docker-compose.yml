@@ -1,0 +1,34 @@
+name: verdimetria
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    network_mode: host
+    command: postgres -c listen_addresses=127.0.0.1 -p ${POSTGRES_PORT:-5433}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-verdimetria}
+      POSTGRES_USER: ${POSTGRES_USER:-verdimetria}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-verdimetria-local}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p ${POSTGRES_PORT:-5433} -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    network_mode: host
+    command: redis-server --appendonly yes --bind 127.0.0.1 --port 6380
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-p", "6380", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:

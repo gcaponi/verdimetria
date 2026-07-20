@@ -19,6 +19,17 @@ FIELD_POLYGON: dict[str, Any] = {
     ]],
 }
 
+PIEDMONT_FIELD_POLYGON: dict[str, Any] = {
+    "type": "Polygon",
+    "coordinates": [[
+        [7.67, 45.06],
+        [7.68, 45.06],
+        [7.68, 45.07],
+        [7.67, 45.07],
+        [7.67, 45.06],
+    ]],
+}
+
 
 class FakeResponse:
     content = b"fake-geotiff"
@@ -79,6 +90,19 @@ def test_ndvi_evalscript_masks_invalid_scl_and_data_pixels() -> None:
     assert '"SCL"' in NDVI_RAW_EVALSCRIPT
     assert '"dataMask"' in NDVI_RAW_EVALSCRIPT
     assert "return [NaN]" in NDVI_RAW_EVALSCRIPT
+
+
+def test_process_request_selects_local_utm_when_crs_is_omitted() -> None:
+    area = AnalysisArea.from_geojson("Campo Piemonte", PIEDMONT_FIELD_POLYGON)
+
+    request_body = build_process_request(
+        NDVI_RAW_EVALSCRIPT,
+        area,
+        "2026-06-01",
+        "2026-06-30",
+    )
+
+    assert request_body["input"]["bounds"]["properties"]["crs"].endswith("/32632")
 
 
 def test_fetch_ndvi_posts_built_payload_and_writes_geotiff(
