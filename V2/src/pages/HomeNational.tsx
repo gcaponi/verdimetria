@@ -1,51 +1,54 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import MapPanelNational from "@/components/MapPanelNational";
 import LayerCatalog from "@/components/LayerCatalog";
 import AnalysisWorkspace from "@/components/AnalysisWorkspace";
+import AuthControl from "@/components/AuthControl";
+import ConfirmBoundaryDialog from "@/components/ConfirmBoundaryDialog";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { loadCdseCatalog, WMS_LAYERS } from "@/lib/wms";
+import { useAuth } from "@/hooks/useAuth";
+import {
+  createField,
+  FieldsApiError,
+  listFields,
+  storedFieldToMapArea,
+} from "@/lib/fields";
 import {
   CloudSun,
   ChevronDown,
   Database,
   Download,
   Layers,
+  LoaderCircle,
   Map,
   MapPin,
+  RefreshCw,
   Satellite,
   Sprout,
   Trash2,
 } from "lucide-react";
 import type { MapArea } from "@/types";
 
-const TECHNICAL_DEMO_AREA: MapArea = {
-  id: "DEMO-RG-01",
-  name: "Demo tecnica Ragusa",
-  poly: [
-    [14.6, 36.92],
-    [14.61, 36.92],
-    [14.61, 36.93],
-    [14.6, 36.93],
-  ],
-  area_ha: geodesicAreaHectares([
-    [14.6, 36.92],
-    [14.61, 36.92],
-    [14.61, 36.93],
-    [14.6, 36.93],
-  ]),
-};
-
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1024px)";
 const DESKTOP_PANEL_IDS = ["data", "map"];
 
 export default function HomeNational() {
-  const [areas, setAreas] = useState<MapArea[]>([TECHNICAL_DEMO_AREA]);
-  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(TECHNICAL_DEMO_AREA.id);
+  const { isAuthenticated, getAuthHeader, logout } = useAuth();
+  const [areas, setAreas] = useState<MapArea[]>([]);
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
+  const [pendingBoundary, setPendingBoundary] = useState<[number, number][] | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [confirmBoundaryOpen, setConfirmBoundaryOpen] = useState(false);
+  const [fieldSaving, setFieldSaving] = useState(false);
+  const [fieldsLoading, setFieldsLoading] = useState(false);
+  const [fieldsError, setFieldsError] = useState<string | null>(null);
+  const [fieldsReloadKey, setFieldsReloadKey] = useState(0);
+  const fieldsRequestRef = useRef(0);
   const [layerId, setLayerId] = useState("NDVI");
   const [layers, setLayers] = useState(WMS_LAYERS);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -68,6 +71,50 @@ export default function HomeNational() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const requestId = ++fieldsRequestRef.current;
+    if (!isAuthenticated) {
+      setAreas([]);
+      setSelectedAreaId(null);
+      setFieldsLoading(false);
+      setFieldsError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setFieldsLoading(true);
+    setFieldsError(null);
+    getAuthHeader()
+      .then((authorization) => listFields(authorization, controller.signal))
+      .then((storedFields) => {
+        if (requestId !== fieldsRequestRef.current) return;
+        const persistentAreas = storedFields
+          .map(storedFieldToMapArea)
+          .filter((area): area is MapArea => area !== null);
+        setAreas(persistentAreas);
+        setSelectedAreaId((currentId) =>
+          persistentAreas.some((area) => area.id === currentId)
+            ? currentId
+            : persistentAreas[0]?.id ?? null,
+        );
+      })
+      .catch((loadError: unknown) => {
+        if (controller.signal.aborted || requestId !== fieldsRequestRef.current) return;
+        if (loadError instanceof FieldsApiError && loadError.status === 401) logout();
+        setFieldsError(fieldErrorMessage(loadError));
+      })
+      .finally(() => {
+        if (requestId === fieldsRequestRef.current) setFieldsLoading(false);
+      });
+    return () => controller.abort();
+  }, [fieldsReloadKey, getAuthHeader, isAuthenticated, logout]);
+
+  useEffect(() => {
+    if (!authOpen && !isAuthenticated && pendingBoundary && !confirmBoundaryOpen) {
+      setPendingBoundary(null);
+    }
+  }, [authOpen, confirmBoundaryOpen, isAuthenticated, pendingBoundary]);
+
   const selectedArea = useMemo(
     () => areas.find((area) => area.id === selectedAreaId) ?? null,
     [areas, selectedAreaId]
@@ -75,15 +122,42 @@ export default function HomeNational() {
   const activeLayer = layers.find((layer) => layer.id === layerId) ?? WMS_LAYERS[0];
 
   const handleCustomArea = (poly: [number, number][]) => {
-    const number = areas.filter((area) => !area.id.startsWith("DEMO-")).length + 1;
-    const area: MapArea = {
-      id: `AREA-${number}`,
-      name: `Campo ${number}`,
-      poly,
-      area_ha: geodesicAreaHectares(poly),
-    };
-    setAreas((current) => [...current, area]);
-    setSelectedAreaId(area.id);
+    setPendingBoundary(poly);
+    setFieldsError(null);
+    if (isAuthenticated) setConfirmBoundaryOpen(true);
+    else setAuthOpen(true);
+  };
+
+  const confirmCustomArea = async (name: string) => {
+    if (!pendingBoundary) return;
+    setFieldSaving(true);
+    setFieldsError(null);
+    try {
+      const authorization = await getAuthHeader();
+      const storedField = await createField(authorization, name, pendingBoundary);
+      const area = storedFieldToMapArea(storedField);
+      if (!area) throw new Error("Il backend non ha restituito un confine valido");
+      fieldsRequestRef.current += 1;
+      setAreas((current) => [
+        area,
+        ...current.filter((currentArea) => currentArea.id !== area.id),
+      ]);
+      setSelectedAreaId(area.id);
+      setPendingBoundary(null);
+      setConfirmBoundaryOpen(false);
+    } catch (saveError) {
+      if (saveError instanceof FieldsApiError && saveError.status === 401) logout();
+      setFieldsError(fieldErrorMessage(saveError));
+    } finally {
+      setFieldSaving(false);
+    }
+  };
+
+  const cancelCustomArea = () => {
+    if (fieldSaving) return;
+    setConfirmBoundaryOpen(false);
+    setPendingBoundary(null);
+    setFieldsError(null);
   };
 
   const exportGeoJson = () => {
@@ -115,6 +189,22 @@ export default function HomeNational() {
 
   const dataPanel = (
     <div className={isDesktopLayout ? "min-w-0 space-y-5 pr-4" : "min-w-0 space-y-5"}>
+      {fieldsError && !confirmBoundaryOpen && (
+        <div role="alert" className="flex items-center gap-3 border-y border-rose-400/30 bg-rose-400/5 px-3 py-2 text-sm text-rose-200">
+          <span className="min-w-0 flex-1">{fieldsError}</span>
+          {isAuthenticated && (
+            <button
+              type="button"
+              onClick={() => setFieldsReloadKey((current) => current + 1)}
+              title="Riprova caricamento"
+              aria-label="Riprova caricamento"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-300/30 hover:bg-rose-300/10"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      )}
       {selectedArea ? (
         <>
           <section className="border-y border-slate-800 py-5">
@@ -123,9 +213,7 @@ export default function HomeNational() {
               <div>
                 <h1 className="text-2xl font-semibold text-slate-100">{selectedArea.name}</h1>
                 <p className="mt-1 text-sm text-slate-400">
-                  {selectedArea.id.startsWith("DEMO-")
-                    ? "AOI tecnica dimostrativa · dati satellitari reali · non e' un campo autorizzato"
-                    : "Confine acquisito sulla mappa · analisi CDSE reale richiesta on demand"}
+                  Confine acquisito sulla mappa · analisi CDSE reale richiesta on demand
                 </p>
               </div>
               <div className="text-right">
@@ -200,6 +288,18 @@ export default function HomeNational() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
+      {pendingBoundary && (
+        <ConfirmBoundaryDialog
+          open={confirmBoundaryOpen}
+          suggestedName={`Campo ${areas.length + 1}`}
+          areaHectares={geodesicAreaHectares(pendingBoundary)}
+          vertexCount={pendingBoundary.length}
+          pending={fieldSaving}
+          error={confirmBoundaryOpen ? fieldsError : null}
+          onCancel={cancelCustomArea}
+          onConfirm={confirmCustomArea}
+        />
+      )}
       <header className="sticky top-0 z-[600] border-b border-slate-800 bg-slate-950/90 backdrop-blur">
         <div className="flex w-full flex-wrap items-center gap-3 px-3 py-3 sm:px-4 xl:px-5">
           <div className="flex items-center gap-2.5">
@@ -215,6 +315,18 @@ export default function HomeNational() {
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            {fieldsLoading && (
+              <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Campi
+              </span>
+            )}
+            <AuthControl
+              open={authOpen}
+              onOpenChange={setAuthOpen}
+              onAuthenticated={() => {
+                if (pendingBoundary) setConfirmBoundaryOpen(true);
+              }}
+            />
             {selectedArea && (
               <>
                 <Select
@@ -333,6 +445,12 @@ function download(name: string, content: string, type: string) {
   anchor.download = name;
   anchor.click();
   URL.revokeObjectURL(anchor.href);
+}
+
+function fieldErrorMessage(error: unknown): string {
+  if (error instanceof FieldsApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "Connessione al backend non riuscita";
 }
 
 function Source({

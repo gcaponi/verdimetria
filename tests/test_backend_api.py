@@ -1,6 +1,9 @@
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+from django.core import mail
+from django.test import override_settings
 from rest_framework.test import APIClient
 
 from backend.accounts.models import User
@@ -79,6 +82,68 @@ def test_register_rejects_case_insensitive_duplicate_email(api_client: APIClient
 
     assert response.status_code == 400
     assert "email" in response.data
+
+
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    FRONTEND_URL="https://app.example.test",
+)
+@pytest.mark.django_db
+def test_password_reset_round_trip_uses_single_use_token(
+    api_client: APIClient,
+    user: User,
+) -> None:
+    request_response = api_client.post(
+        "/api/v1/auth/password-reset/",
+        {"email": "FARMER@example.com"},
+        format="json",
+    )
+
+    assert request_response.status_code == 200
+    assert set(request_response.data) == {"detail"}
+    assert len(mail.outbox) == 1
+    reset_url = mail.outbox[0].body.splitlines()[-1]
+    reset_query = parse_qs(urlparse(reset_url).query)
+    payload = {
+        "uid": reset_query["reset_uid"][0],
+        "token": reset_query["reset_token"][0],
+        "new_password": "DifferentStrong-2026!",
+    }
+
+    confirm_response = api_client.post(
+        "/api/v1/auth/password-reset/confirm/",
+        payload,
+        format="json",
+    )
+
+    assert confirm_response.status_code == 200
+    user.refresh_from_db()
+    assert user.check_password("DifferentStrong-2026!")
+
+    repeated_response = api_client.post(
+        "/api/v1/auth/password-reset/confirm/",
+        payload,
+        format="json",
+    )
+    assert repeated_response.status_code == 400
+
+
+@override_settings(
+    DEBUG=False,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+)
+@pytest.mark.django_db
+def test_password_reset_does_not_reveal_unknown_email(api_client: APIClient) -> None:
+    response = api_client.post(
+        "/api/v1/auth/password-reset/",
+        {"email": "unknown@example.com"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert set(response.data) == {"detail"}
+    assert len(mail.outbox) == 0
 
 
 @pytest.mark.django_db
