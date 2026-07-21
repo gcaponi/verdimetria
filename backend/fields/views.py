@@ -16,7 +16,7 @@ from backend.fields.serializers import (
 
 class FieldViewSet(viewsets.ModelViewSet):
     serializer_class = FieldSerializer
-    http_method_names = ("get", "post", "head", "options")
+    http_method_names = ("get", "post", "delete", "head", "options")
 
     def get_queryset(self) -> QuerySet[Field]:
         if self.request.user.is_anonymous:

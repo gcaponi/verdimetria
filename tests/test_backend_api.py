@@ -228,6 +228,45 @@ def test_fields_are_isolated_by_owner(api_client: APIClient, user: User) -> None
 
 
 @pytest.mark.django_db
+def test_delete_field_removes_field_and_boundaries(api_client: APIClient, user: User) -> None:
+    api_client.force_authenticate(user)
+    create_response = api_client.post(
+        "/api/v1/fields/",
+        {"name": "Campo da eliminare", "boundary": FIELD_POLYGON},
+        format="json",
+    )
+    field_id = create_response.data["id"]
+
+    delete_response = api_client.delete(f"/api/v1/fields/{field_id}/")
+
+    assert delete_response.status_code == 204
+    assert Field.objects.filter(pk=field_id).count() == 0
+    assert BoundaryVersion.objects.filter(field_id=field_id).count() == 0
+    list_response = api_client.get("/api/v1/fields/")
+    assert list_response.data == []
+
+
+@pytest.mark.django_db
+def test_delete_field_is_isolated_by_owner(api_client: APIClient, user: User) -> None:
+    api_client.force_authenticate(user)
+    create_response = api_client.post(
+        "/api/v1/fields/",
+        {"name": "Campo privato", "boundary": FIELD_POLYGON},
+        format="json",
+    )
+    other_user = User.objects.create_user(
+        email="other@example.com",
+        password="StrongPass-2026!",
+    )
+    api_client.force_authenticate(other_user)
+
+    delete_response = api_client.delete(f"/api/v1/fields/{create_response.data['id']}/")
+
+    assert delete_response.status_code == 404
+    assert Field.objects.filter(pk=create_response.data["id"]).count() == 1
+
+
+@pytest.mark.django_db
 def test_add_boundary_creates_next_version(api_client: APIClient, user: User) -> None:
     api_client.force_authenticate(user)
     field_response = api_client.post(
