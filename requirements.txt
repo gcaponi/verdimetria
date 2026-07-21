@@ -19,6 +19,7 @@ oauthlib==3.2.2
 
 # Backend web e persistenza
 Django==6.0.7
+gunicorn==23.0.0
 djangorestframework==3.17.1
 djangorestframework-simplejwt==5.5.1
 django-cors-headers==4.9.0
