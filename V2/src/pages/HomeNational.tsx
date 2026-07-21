@@ -13,6 +13,7 @@ import { loadCdseCatalog, WMS_LAYERS } from "@/lib/wms";
 import { useAuth } from "@/hooks/useAuth";
 import {
   createField,
+  deleteField,
   FieldsApiError,
   listFields,
   storedFieldToMapArea,
@@ -44,6 +45,7 @@ export default function HomeNational() {
   const [authOpen, setAuthOpen] = useState(false);
   const [confirmBoundaryOpen, setConfirmBoundaryOpen] = useState(false);
   const [fieldSaving, setFieldSaving] = useState(false);
+  const [fieldDeleting, setFieldDeleting] = useState(false);
   const [fieldsLoading, setFieldsLoading] = useState(false);
   const [fieldsError, setFieldsError] = useState<string | null>(null);
   const [fieldsReloadKey, setFieldsReloadKey] = useState(0);
@@ -176,11 +178,23 @@ export default function HomeNational() {
     );
   };
 
-  const deleteSelectedArea = () => {
-    if (!selectedAreaId) return;
-    const remainingAreas = areas.filter((area) => area.id !== selectedAreaId);
-    setAreas(remainingAreas);
-    setSelectedAreaId(remainingAreas.at(-1)?.id ?? null);
+  const deleteSelectedArea = async () => {
+    if (!selectedAreaId || fieldDeleting) return;
+    setFieldDeleting(true);
+    setFieldsError(null);
+    try {
+      const authorization = await getAuthHeader();
+      await deleteField(authorization, selectedAreaId);
+      fieldsRequestRef.current += 1;
+      const remainingAreas = areas.filter((area) => area.id !== selectedAreaId);
+      setAreas(remainingAreas);
+      setSelectedAreaId(remainingAreas.at(-1)?.id ?? null);
+    } catch (deleteError) {
+      if (deleteError instanceof FieldsApiError && deleteError.status === 401) logout();
+      setFieldsError(fieldErrorMessage(deleteError));
+    } finally {
+      setFieldDeleting(false);
+    }
   };
 
   const dataPanel = (
@@ -325,9 +339,10 @@ export default function HomeNational() {
                 />
                 <button
                   onClick={deleteSelectedArea}
+                  disabled={fieldDeleting}
                   aria-label="Elimina campo selezionato"
                   title="Elimina campo selezionato"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-400 transition-colors hover:border-rose-400/60 hover:bg-rose-400/10 hover:text-rose-300"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-400 transition-colors hover:border-rose-400/60 hover:bg-rose-400/10 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

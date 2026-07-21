@@ -72,6 +72,20 @@ export async function createField(
   });
 }
 
+export async function deleteField(
+  authorization: string,
+  fieldId: string,
+): Promise<void> {
+  const response = await fetch(`${getApiBaseUrl()}/api/v1/fields/${fieldId}/`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authorization,
+    },
+  });
+  if (!response.ok) throw await readFieldsError(response);
+}
+
 export function storedFieldToMapArea(field: StoredField): MapArea | null {
   const boundary = field.latest_boundary;
   if (!boundary) return null;
