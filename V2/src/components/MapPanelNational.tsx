@@ -6,7 +6,8 @@ import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import { areaBounds, buildWmsUrl } from "@/lib/wms";
 import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
-import { Check, Hexagon, MapPin, RectangleHorizontal, Search, X } from "lucide-react";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { Check, Hand, Hexagon, MapPin, Move, RectangleHorizontal, Search, X } from "lucide-react";
 
 interface Props {
   areas: MapArea[];
@@ -35,6 +36,12 @@ export default function MapPanelNational({
   const fittedAreaRef = useRef<string | null>(null);
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
   const [hasDraft, setHasDraft] = useState(false);
+  const isMobile = useIsMobile();
+  const [dragEnabled, setDragEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.innerWidth >= 768;
+  });
+  const dragEnabledRef = useRef(dragEnabled);
   const [overlayState, setOverlayState] = useState<{ key: string | null; status: LayerStatus }>({
     key: null,
     status: "idle",
@@ -42,6 +49,17 @@ export default function MapPanelNational({
 
   const modeRef = useRef<DrawMode>("none");
   const selectArea = useEffectEvent(onSelectArea);
+
+  useEffect(() => {
+    dragEnabledRef.current = dragEnabled;
+  }, [dragEnabled]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const container = containerRef.current;
+    if (!map || !container || modeRef.current !== "none" || hasDraft) return;
+    restoreMapNavigation(map, container, dragEnabled);
+  }, [dragEnabled, hasDraft]);
 
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
   const overlayKey = selectedArea && activeLayer.provider !== "none" && activeLayer.provider !== "pending"
@@ -63,14 +81,18 @@ export default function MapPanelNational({
     modeRef.current = nextMode;
     setDrawMode(nextMode);
     if (nextMode === "none") {
-      restoreMapNavigation(map, container);
+      restoreMapNavigation(map, container, dragEnabled);
       return;
     }
 
+    if (!dragEnabled) setDragEnabled(true);
     map.dragging.disable();
     map.touchZoom.disable();
     map.doubleClickZoom.disable();
     map.scrollWheelZoom.disable();
+    map.boxZoom.disable();
+    map.keyboard.disable();
+    container.style.touchAction = "none";
     container.style.cursor = "crosshair";
     map.pm.enableDraw(nextMode === "rect" ? "Rectangle" : "Polygon", {
       allowSelfIntersection: false,
@@ -93,7 +115,7 @@ export default function MapPanelNational({
         draftLayerRef.current.pm.disable();
         map.removeLayer(draftLayerRef.current);
       }
-      if (container) restoreMapNavigation(map, container);
+      if (container) restoreMapNavigation(map, container, dragEnabled);
     }
     draftLayerRef.current = null;
     modeRef.current = "none";
@@ -126,7 +148,7 @@ export default function MapPanelNational({
 
     layer.pm.disable();
     map.removeLayer(layer);
-    restoreMapNavigation(map, container);
+    restoreMapNavigation(map, container, dragEnabled);
     draftLayerRef.current = null;
     setHasDraft(false);
     onCustomArea(coordinates);
@@ -141,7 +163,14 @@ export default function MapPanelNational({
       attributionControl: true,
       maxBounds: L.latLngBounds([34.5, 5.5], [48.5, 20.5]),
       maxBoundsViscosity: 0.6,
+      dragging: dragEnabledRef.current,
+      touchZoom: dragEnabledRef.current,
+      doubleClickZoom: dragEnabledRef.current,
+      scrollWheelZoom: dragEnabledRef.current,
+      boxZoom: dragEnabledRef.current,
+      keyboard: dragEnabledRef.current,
     });
+    containerRef.current.style.touchAction = dragEnabledRef.current ? "none" : "pan-x pan-y";
     L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       { attribution: "Esri, Maxar, Earthstar Geographics", maxZoom: 18 }
@@ -161,7 +190,7 @@ export default function MapPanelNational({
       }
 
       map.pm.disableDraw();
-      restoreMapNavigation(map, containerRef.current!);
+      restoreMapNavigation(map, containerRef.current!, dragEnabledRef.current);
       modeRef.current = "none";
       setDrawMode("none");
       draftLayerRef.current = layer;
@@ -289,6 +318,21 @@ export default function MapPanelNational({
 
         <div className="absolute left-14 right-4 top-4 z-[500] flex flex-col items-stretch gap-2 sm:left-16 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="order-2 flex flex-wrap items-center gap-1.5 sm:order-1">
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => setDragEnabled(!dragEnabled)}
+              className={`flex h-11 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-medium shadow-lg backdrop-blur transition-colors ${
+                dragEnabled
+                  ? "border-lime-400/50 bg-lime-400/20 text-lime-300 hover:bg-lime-400/30"
+                  : "border-slate-700 bg-slate-900/95 text-slate-200 hover:border-lime-400/50 hover:text-lime-300"
+              }`}
+              title={dragEnabled ? "Blocca la mappa per scorrere la pagina" : "Sblocca la mappa per spostarla"}
+            >
+              {dragEnabled ? <Hand className="h-4 w-4" /> : <Move className="h-4 w-4" />}
+              <span>{dragEnabled ? "Mappa attiva" : "Scorri pagina"}</span>
+            </button>
+          )}
           {hasDraft ? (
             <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-lg border border-lime-400/40 bg-slate-900/95 p-1.5 pl-3 shadow-lg backdrop-blur">
               <span className="min-w-0 text-[12px] font-medium text-lime-300">
@@ -384,11 +428,24 @@ function draftCoordinates(layer: L.Polygon): [number, number][] {
   ]);
 }
 
-function restoreMapNavigation(map: L.Map, container: HTMLDivElement) {
-  map.dragging.enable();
-  map.touchZoom.enable();
-  map.doubleClickZoom.enable();
-  map.scrollWheelZoom.enable();
+function restoreMapNavigation(map: L.Map, container: HTMLDivElement, enabled: boolean) {
+  if (enabled) {
+    map.dragging.enable();
+    map.touchZoom.enable();
+    map.doubleClickZoom.enable();
+    map.scrollWheelZoom.enable();
+    map.boxZoom.enable();
+    map.keyboard.enable();
+    container.style.touchAction = "none";
+  } else {
+    map.dragging.disable();
+    map.touchZoom.disable();
+    map.doubleClickZoom.disable();
+    map.scrollWheelZoom.disable();
+    map.boxZoom.disable();
+    map.keyboard.disable();
+    container.style.touchAction = "pan-x pan-y";
+  }
   container.style.cursor = "";
 }
 
