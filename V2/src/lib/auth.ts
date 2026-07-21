@@ -1,5 +1,6 @@
 const API_URL =
-  import.meta.env.VITE_DJANGO_API_URL ?? "http://127.0.0.1:8000";
+  import.meta.env.VITE_DJANGO_API_URL ??
+  (import.meta.env.PROD ? "https://api.verdimetria.cais.uno" : "http://127.0.0.1:8000");
 const TOKENS_KEY = "verdimetria.tokens";
 const USER_KEY = "verdimetria.user";
 
