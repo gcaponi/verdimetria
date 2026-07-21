@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "@geoman-io/leaflet-geoman-free";
@@ -6,7 +6,7 @@ import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import { areaBounds, buildWmsUrl } from "@/lib/wms";
 import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
-import { Check, Hexagon, RectangleHorizontal, X } from "lucide-react";
+import { Check, Hexagon, MapPin, RectangleHorizontal, Search, X } from "lucide-react";
 
 interface Props {
   areas: MapArea[];
@@ -31,6 +31,7 @@ export default function MapPanelNational({
   const overlayRef = useRef<L.ImageOverlay | null>(null);
   const areasLayerRef = useRef<L.LayerGroup | null>(null);
   const draftLayerRef = useRef<L.Polygon | null>(null);
+  const searchMarkerRef = useRef<L.CircleMarker | null>(null);
   const fittedAreaRef = useRef<string | null>(null);
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
   const [hasDraft, setHasDraft] = useState(false);
@@ -101,6 +102,20 @@ export default function MapPanelNational({
   };
   const cancelDrawingFromEffect = useEffectEvent(cancelDrawing);
 
+  const locateAddress = (lat: number, lon: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (searchMarkerRef.current) map.removeLayer(searchMarkerRef.current);
+    searchMarkerRef.current = L.circleMarker([lat, lon], {
+      color: "#a3e635",
+      fillColor: "#a3e635",
+      fillOpacity: 0.35,
+      radius: 10,
+      weight: 2,
+    }).addTo(map);
+    map.flyTo([lat, lon], 16);
+  };
+
   const confirmDraft = () => {
     const map = mapRef.current;
     const container = containerRef.current;
@@ -135,6 +150,7 @@ export default function MapPanelNational({
       "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
       { maxZoom: 18, opacity: 0.9 }
     ).addTo(map);
+    L.control.scale({ imperial: false, metric: true, position: "bottomleft" }).addTo(map);
     mapRef.current = map;
     areasLayerRef.current = L.layerGroup().addTo(map);
 
@@ -256,10 +272,24 @@ export default function MapPanelNational({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-slate-800">
+      {selectedArea && activeLayer && activeLayer.provider !== "none" && (
+        <div className="shrink-0 border-b border-slate-800 bg-slate-950 px-3 py-2 text-[11px]">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <div className="shrink-0 font-semibold text-slate-200">{activeLayer.label}</div>
+            <div className="min-w-0 flex-1 text-slate-400">{activeLayer.detail}</div>
+            <div className={layerStatusColor(layerStatus)}>
+              {layerStatusLabel(layerStatus, activeLayer.provider)}
+            </div>
+          </div>
+          <LayerLegend layer={activeLayer} />
+        </div>
+      )}
       <div className="relative isolate z-0 min-h-0 flex-1 overflow-hidden">
         <div ref={containerRef} className="h-full w-full bg-slate-950" />
 
-        <div className="absolute left-1/2 top-4 z-[500] flex -translate-x-1/2 items-center gap-1.5">
+        <AddressSearch onLocate={locateAddress} />
+
+        <div className="absolute left-1/2 top-[68px] z-[500] flex -translate-x-1/2 items-center gap-1.5 sm:top-4">
           {hasDraft ? (
             <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-lg border border-lime-400/40 bg-slate-900/95 p-1.5 pl-3 shadow-lg backdrop-blur">
               <span className="min-w-0 text-[12px] font-medium text-lime-300">
@@ -317,19 +347,6 @@ export default function MapPanelNational({
 
         <AreaChip area={selectedArea} />
       </div>
-
-      {selectedArea && activeLayer && activeLayer.provider !== "none" && (
-        <div className="shrink-0 border-t border-slate-800 bg-slate-950 px-3 py-2 text-[11px]">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <div className="shrink-0 font-semibold text-slate-200">{activeLayer.label}</div>
-            <div className="min-w-0 flex-1 text-slate-400">{activeLayer.detail}</div>
-            <div className={layerStatusColor(layerStatus)}>
-              {layerStatusLabel(layerStatus, activeLayer.provider)}
-            </div>
-          </div>
-          <LayerLegend layer={activeLayer} />
-        </div>
-      )}
     </div>
   );
 }
@@ -398,7 +415,7 @@ function DrawButton({
 function AreaChip({ area }: { area?: MapArea }) {
   if (!area) return null;
   return (
-    <div className="absolute left-4 top-4 z-[400] max-w-[220px] rounded-lg border border-slate-700/70 bg-slate-900/90 px-3 py-2 shadow-lg backdrop-blur">
+    <div className="absolute left-4 top-[124px] z-[400] max-w-[220px] rounded-lg border border-slate-700/70 bg-slate-900/90 px-3 py-2 shadow-lg backdrop-blur sm:top-4">
       <div className="truncate text-sm font-semibold text-slate-100">{area.name}</div>
       <div className="text-[11px] text-slate-400">
         {area.area_ha.toLocaleString("it-IT", { maximumFractionDigits: 1 })} ha
@@ -592,4 +609,92 @@ async function buildHorizontalLegend(imageUrl: string, signal: AbortSignal): Pro
   } finally {
     bitmap.close();
   }
+}
+
+interface GeocodeResult {
+  lat: string;
+  lon: string;
+  display_name: string;
+}
+
+function AddressSearch({ onLocate }: { onLocate: (lat: number, lon: number) => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<GeocodeResult[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const search = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = query.trim();
+    if (!trimmed || searching) return;
+    setSearching(true);
+    setFailed(false);
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=it&accept-language=it&q=${encodeURIComponent(trimmed)}`
+      );
+      if (!response.ok) throw new Error(`Geocoding non disponibile (${response.status})`);
+      const data = (await response.json()) as GeocodeResult[];
+      setResults(data);
+      setFailed(data.length === 0);
+    } catch {
+      setResults(null);
+      setFailed(true);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const selectResult = (result: GeocodeResult) => {
+    onLocate(Number(result.lat), Number(result.lon));
+    setResults(null);
+    setFailed(false);
+  };
+
+  return (
+    <div className="absolute left-4 right-4 top-4 z-[500] sm:left-auto sm:w-[280px]">
+      <form
+        onSubmit={search}
+        className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/95 p-1 pl-2.5 shadow-lg backdrop-blur"
+      >
+        <Search className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Cerca indirizzo o comune…"
+          aria-label="Cerca indirizzo o comune"
+          className="h-9 min-w-0 flex-1 bg-transparent text-[12px] text-slate-100 outline-none placeholder:text-slate-500"
+        />
+        <button
+          type="submit"
+          disabled={searching}
+          className="flex h-9 shrink-0 items-center rounded-md bg-lime-400 px-2.5 text-[12px] font-bold text-slate-950 hover:bg-lime-300 disabled:opacity-50"
+        >
+          {searching ? "…" : "Vai"}
+        </button>
+      </form>
+      {failed && (
+        <div className="mt-1.5 rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-2 text-[11px] text-slate-400 shadow-lg backdrop-blur">
+          Nessun risultato. Prova con comune, provincia o indirizzo completo.
+        </div>
+      )}
+      {results && results.length > 0 && (
+        <ul className="mt-1.5 overflow-hidden rounded-lg border border-slate-700 bg-slate-900/95 shadow-lg backdrop-blur">
+          {results.map((result, index) => (
+            <li key={`${result.lat},${result.lon}-${index}`}>
+              <button
+                type="button"
+                onClick={() => selectResult(result)}
+                className="flex w-full items-start gap-2 px-3 py-2 text-left text-[11px] leading-snug text-slate-300 transition-colors hover:bg-slate-800 hover:text-lime-300"
+              >
+                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
+                <span className="min-w-0">{result.display_name}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

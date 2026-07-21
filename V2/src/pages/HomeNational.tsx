@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import MapPanelNational from "@/components/MapPanelNational";
-import LayerCatalog from "@/components/LayerCatalog";
 import AnalysisWorkspace from "@/components/AnalysisWorkspace";
 import AuthControl from "@/components/AuthControl";
 import ConfirmBoundaryDialog from "@/components/ConfirmBoundaryDialog";
@@ -51,8 +50,6 @@ export default function HomeNational() {
   const fieldsRequestRef = useRef(0);
   const [layerId, setLayerId] = useState("NDVI");
   const [layers, setLayers] = useState(WMS_LAYERS);
-  const [catalogLoading, setCatalogLoading] = useState(true);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
   const isDesktopLayout = useDesktopLayout();
   const { defaultLayout, onLayoutChange } = useDefaultLayout({
     id: "verdimetria-workspace",
@@ -65,9 +62,8 @@ export default function HomeNational() {
       .then((catalogLayers) => setLayers([...WMS_LAYERS, ...catalogLayers]))
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        setCatalogError(error instanceof Error ? error.message : "Catalogo CDSE non disponibile");
-      })
-      .finally(() => setCatalogLoading(false));
+        console.warn("Catalogo CDSE non disponibile", error);
+      });
     return () => controller.abort();
   }, []);
 
@@ -247,14 +243,6 @@ export default function HomeNational() {
           </div>
         </section>
       )}
-
-      <LayerCatalog
-        layers={layers}
-        activeLayerId={layerId}
-        onLayerChange={setLayerId}
-        catalogLoading={catalogLoading}
-        catalogError={catalogError}
-      />
 
       <footer className="border-y border-slate-800 py-5 text-[11px] leading-relaxed text-slate-400">
         <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-200">
