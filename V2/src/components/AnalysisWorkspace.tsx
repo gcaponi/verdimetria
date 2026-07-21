@@ -84,7 +84,7 @@ export default function AnalysisWorkspace({
     <section className="border-y border-slate-800">
       <nav
         aria-label="Analisi del campo"
-        className="flex gap-1 overflow-x-auto border-b border-slate-800 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex flex-wrap gap-1 border-b border-slate-800 py-2"
       >
         {TABS.map((tab) => {
           const Icon = tab.icon;

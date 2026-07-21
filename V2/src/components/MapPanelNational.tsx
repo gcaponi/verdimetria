@@ -287,9 +287,8 @@ export default function MapPanelNational({
       <div className="relative isolate z-0 min-h-0 flex-1 overflow-hidden">
         <div ref={containerRef} className="h-full w-full bg-slate-950" />
 
-        <AddressSearch onLocate={locateAddress} />
-
-        <div className="absolute left-1/2 top-[68px] z-[500] flex -translate-x-1/2 items-center gap-1.5 sm:top-4">
+        <div className="absolute left-14 right-4 top-4 z-[500] flex flex-col items-stretch gap-2 sm:left-16 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+          <div className="order-2 flex flex-wrap items-center gap-1.5 sm:order-1">
           {hasDraft ? (
             <div className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-lg border border-lime-400/40 bg-slate-900/95 p-1.5 pl-3 shadow-lg backdrop-blur">
               <span className="min-w-0 text-[12px] font-medium text-lime-300">
@@ -343,6 +342,8 @@ export default function MapPanelNational({
               </button>
             </div>
           )}
+          </div>
+          <AddressSearch onLocate={locateAddress} />
         </div>
 
         <AreaChip area={selectedArea} />
@@ -415,7 +416,7 @@ function DrawButton({
 function AreaChip({ area }: { area?: MapArea }) {
   if (!area) return null;
   return (
-    <div className="absolute left-4 top-[124px] z-[400] max-w-[220px] rounded-lg border border-slate-700/70 bg-slate-900/90 px-3 py-2 shadow-lg backdrop-blur sm:top-4">
+    <div className="absolute bottom-12 left-4 z-[400] max-w-[220px] rounded-lg border border-slate-700/70 bg-slate-900/90 px-3 py-2 shadow-lg backdrop-blur">
       <div className="truncate text-sm font-semibold text-slate-100">{area.name}</div>
       <div className="text-[11px] text-slate-400">
         {area.area_ha.toLocaleString("it-IT", { maximumFractionDigits: 1 })} ha
@@ -652,7 +653,7 @@ function AddressSearch({ onLocate }: { onLocate: (lat: number, lon: number) => v
   };
 
   return (
-    <div className="absolute left-4 right-4 top-4 z-[500] sm:left-auto sm:w-[280px]">
+    <div className="relative order-1 w-full sm:order-2 sm:w-[280px] sm:shrink-0">
       <form
         onSubmit={search}
         className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/95 p-1 pl-2.5 shadow-lg backdrop-blur"
@@ -675,12 +676,12 @@ function AddressSearch({ onLocate }: { onLocate: (lat: number, lon: number) => v
         </button>
       </form>
       {failed && (
-        <div className="mt-1.5 rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-2 text-[11px] text-slate-400 shadow-lg backdrop-blur">
+        <div className="absolute left-0 right-0 top-full z-10 mt-1.5 rounded-lg border border-slate-700 bg-slate-900/95 px-3 py-2 text-[11px] text-slate-400 shadow-lg backdrop-blur">
           Nessun risultato. Prova con comune, provincia o indirizzo completo.
         </div>
       )}
       {results && results.length > 0 && (
-        <ul className="mt-1.5 overflow-hidden rounded-lg border border-slate-700 bg-slate-900/95 shadow-lg backdrop-blur">
+        <ul className="absolute left-0 right-0 top-full z-10 mt-1.5 overflow-hidden rounded-lg border border-slate-700 bg-slate-900/95 shadow-lg backdrop-blur">
           {results.map((result, index) => (
             <li key={`${result.lat},${result.lon}-${index}`}>
               <button
