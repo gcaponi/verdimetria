@@ -681,32 +681,49 @@ function AddressSearch({ onLocate }: { onLocate: (lat: number, lon: number) => v
   const [searching, setSearching] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const search = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  useEffect(() => {
     const trimmed = query.trim();
-    if (!trimmed || searching) return;
-    setSearching(true);
-    setFailed(false);
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=it&accept-language=it&q=${encodeURIComponent(trimmed)}`
-      );
-      if (!response.ok) throw new Error(`Geocoding non disponibile (${response.status})`);
-      const data = (await response.json()) as GeocodeResult[];
-      setResults(data);
-      setFailed(data.length === 0);
-    } catch {
+    if (trimmed.length < 3) {
       setResults(null);
-      setFailed(true);
-    } finally {
+      setFailed(false);
       setSearching(false);
+      return;
     }
-  };
+    setSearching(true);
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=it&accept-language=it&q=${encodeURIComponent(trimmed)}`,
+          { signal: controller.signal }
+        );
+        if (!response.ok) throw new Error(`Geocoding non disponibile (${response.status})`);
+        const data = (await response.json()) as GeocodeResult[];
+        setResults(data);
+        setFailed(data.length === 0);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setResults(null);
+        setFailed(true);
+      } finally {
+        setSearching(false);
+      }
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
 
   const selectResult = (result: GeocodeResult) => {
     onLocate(Number(result.lat), Number(result.lon));
     setResults(null);
     setFailed(false);
+  };
+
+  const search = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (results && results.length > 0) selectResult(results[0]);
   };
 
   return (
@@ -726,7 +743,7 @@ function AddressSearch({ onLocate }: { onLocate: (lat: number, lon: number) => v
         />
         <button
           type="submit"
-          disabled={searching}
+          disabled={searching && (!results || results.length === 0)}
           className="flex h-9 shrink-0 items-center rounded-md bg-lime-400 px-2.5 text-[12px] font-bold text-slate-950 hover:bg-lime-300 disabled:opacity-50"
         >
           {searching ? "…" : "Vai"}
