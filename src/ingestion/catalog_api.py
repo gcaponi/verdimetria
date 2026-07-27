@@ -116,7 +116,9 @@ def fetch_catalog_items(
     max_cloud_cover: int = 20,
     page_size: int = 100,
     max_items: int = 500,
+    oauth: Any | None = None,
 ) -> list[CatalogItem]:
+    """Cerca acquisizioni; `oauth` permette di riusare una sessione esistente."""
     if max_items <= 0:
         raise ValueError("Il limite totale deve essere maggiore di zero")
 
@@ -128,7 +130,7 @@ def fetch_catalog_items(
         max_cloud_cover=max_cloud_cover,
         limit=min(page_size, max_items),
     )
-    oauth = get_oauth_session()
+    oauth = oauth if oauth is not None else get_oauth_session()
     items: list[CatalogItem] = []
 
     while True:

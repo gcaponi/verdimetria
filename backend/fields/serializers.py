@@ -6,9 +6,29 @@ from rest_framework import serializers
 from rest_framework.request import Request
 
 from backend.accounts.models import User
-from backend.fields.models import BoundaryVersion, Field
+from backend.fields.models import AnalysisJob, BoundaryVersion, Field
 from backend.fields.services import append_boundary
 from src.domain import AnalysisArea
+
+
+class AnalysisJobSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnalysisJob
+        fields = (
+            "id",
+            "field",
+            "status",
+            "progress_step",
+            "boundary_version",
+            "params",
+            "result",
+            "error",
+            "attempts",
+            "created_at",
+            "started_at",
+            "completed_at",
+        )
+        read_only_fields = fields
 
 
 class BoundaryVersionSerializer(serializers.ModelSerializer):

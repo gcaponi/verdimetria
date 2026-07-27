@@ -56,3 +56,46 @@ class BoundaryVersion(models.Model):
 
     def __str__(self) -> str:
         return f"{self.field.name} v{self.version}"
+
+
+class AnalysisJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "In attesa"
+        RUNNING = "running", "In esecuzione"
+        COMPLETED = "completed", "Completato"
+        FAILED = "failed", "Fallito"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    field = models.ForeignKey(
+        Field,
+        on_delete=models.CASCADE,
+        related_name="analysis_jobs",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="analysis_jobs",
+    )
+    boundary_version = models.PositiveIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status,
+        default=Status.PENDING,
+    )
+    progress_step = models.CharField(max_length=32, blank=True, default="")
+    idempotency_key = models.CharField(max_length=64, unique=True)
+    params = models.JSONField(default=dict)
+    result = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    celery_task_id = models.CharField(max_length=64, blank=True, default="")
+    attempts = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=("owner", "-created_at"))]
+
+    def __str__(self) -> str:
+        return f"{self.field.name} · {self.status}"

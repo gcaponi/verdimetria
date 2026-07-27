@@ -114,8 +114,11 @@ def fetch_ndvi_statistics(
     area: AnalysisArea,
     start_date: str,
     end_date: str,
+    *,
+    oauth: Any | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
+    """Statistiche NDVI; `oauth` permette di riusare una sessione esistente."""
     request_body = build_statistical_request(
         NDVI_STATISTICS_EVALSCRIPT,
         area,
@@ -123,7 +126,7 @@ def fetch_ndvi_statistics(
         end_date,
         **kwargs,
     )
-    oauth = get_oauth_session()
+    oauth = oauth if oauth is not None else get_oauth_session()
     response = oauth.post(
         STATISTICAL_URL,
         json=request_body,
