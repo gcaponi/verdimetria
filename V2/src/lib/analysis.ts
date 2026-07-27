@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from "@/lib/auth";
+import { FieldsApiError } from "@/lib/fields";
 import type { MapArea } from "@/types";
 
 export type AnalysisStatus = "loading" | "ready" | "error";
@@ -66,32 +68,100 @@ export interface FieldAnalysis {
   disclaimer: string;
 }
 
-export async function analyzeArea(area: MapArea, signal: AbortSignal): Promise<FieldAnalysis> {
-  const firstPoint = area.poly[0];
-  const coordinates = [...area.poly];
-  const lastPoint = coordinates.at(-1);
-  if (lastPoint?.[0] !== firstPoint[0] || lastPoint[1] !== firstPoint[1]) {
-    coordinates.push(firstPoint);
-  }
+type JobStatus = "pending" | "running" | "completed" | "failed";
 
-  const response = await fetch("/api/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      geometry: { type: "Polygon", coordinates: [coordinates] },
-    }),
-    signal,
-  });
-  const payload: unknown = await response.json();
-  if (!response.ok) {
-    const message = isRecord(payload) && typeof payload.error === "string"
-      ? payload.error
-      : `Analisi non disponibile (${response.status})`;
-    throw new Error(message);
-  }
-  return payload as FieldAnalysis;
+interface AnalysisJob {
+  id: string;
+  status: JobStatus;
+  progress_step: string;
+  result: FieldAnalysis | null;
+  error: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const POLL_INTERVAL_MS = 3_000;
+const POLL_TIMEOUT_MS = 5 * 60_000;
+
+export async function analyzeArea(
+  area: MapArea,
+  authorization: string,
+  signal: AbortSignal,
+): Promise<FieldAnalysis> {
+  const job = await jobRequest<AnalysisJob>(
+    `/api/v1/fields/${area.id}/jobs/`,
+    authorization,
+    { method: "POST", body: JSON.stringify({}), signal },
+  );
+  return waitForJobResult(job, authorization, signal);
+}
+
+async function waitForJobResult(
+  job: AnalysisJob,
+  authorization: string,
+  signal: AbortSignal,
+): Promise<FieldAnalysis> {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  let current = job;
+  for (;;) {
+    if (current.status === "completed" && current.result) return current.result;
+    if (current.status === "failed") {
+      throw new Error(current.error || "Analisi non completata");
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Analisi troppo lenta: riprova tra poco");
+    }
+    await sleep(POLL_INTERVAL_MS, signal);
+    current = await jobRequest<AnalysisJob>(
+      `/api/v1/jobs/${current.id}/`,
+      authorization,
+      { signal },
+    );
+  }
+}
+
+async function jobRequest<T>(
+  path: string,
+  authorization: string,
+  init: RequestInit,
+): Promise<T> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authorization,
+    },
+  });
+  if (!response.ok) throw await readJobError(response);
+  return (await response.json()) as T;
+}
+
+async function readJobError(response: Response): Promise<FieldsApiError> {
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  const message =
+    typeof payload === "object" && payload !== null && "detail" in payload
+      ? String((payload as { detail: unknown }).detail)
+      : `Analisi non disponibile (${response.status})`;
+  return new FieldsApiError(message, response.status);
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

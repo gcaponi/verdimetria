@@ -18,6 +18,8 @@ import VegetationCharts from "@/sections/VegetationCharts";
 import RealInsightsSection from "@/sections/RealInsightsSection";
 import { analyzeArea } from "@/lib/analysis";
 import type { AnalysisStatus, FieldAnalysis } from "@/lib/analysis";
+import { FieldsApiError } from "@/lib/fields";
+import { useAuth } from "@/hooks/useAuth";
 import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
 import { cn } from "@/lib/utils";
@@ -46,6 +48,7 @@ export default function AnalysisWorkspace({
   activeLayerId,
   onLayerChange,
 }: Props) {
+  const { getAuthHeader, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [requestVersion, setRequestVersion] = useState(0);
   const requestKey = `${area.id}:${requestVersion}:${area.poly.length}`;
@@ -64,12 +67,14 @@ export default function AnalysisWorkspace({
 
   useEffect(() => {
     const controller = new AbortController();
-    analyzeArea(area, controller.signal)
+    getAuthHeader()
+      .then((authorization) => analyzeArea(area, authorization, controller.signal))
       .then((result) => {
         setAnalysisState({ key: requestKey, analysis: result, status: "ready", error: null });
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        if (error instanceof FieldsApiError && error.status === 401) logout();
         setAnalysisState({
           key: requestKey,
           analysis: null,
@@ -78,7 +83,7 @@ export default function AnalysisWorkspace({
         });
       });
     return () => controller.abort();
-  }, [area, requestKey]);
+  }, [area, requestKey, getAuthHeader, logout]);
 
   return (
     <section className="border-y border-slate-800">
