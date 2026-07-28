@@ -164,9 +164,32 @@ def build_field_analysis(
     vegetation: dict[str, Any],
     ai: dict[str, Any],
     terrain: dict[str, Any],
+    land_cover: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     centroid = area.geometry.centroid
-    return {
+    provenance = [
+        CATALOG_PROVENANCE,
+        {
+            "provider": "Copernicus DEM GLO-30",
+            "dataset": "Digital Elevation Model 30 m",
+            "services": ["Process API"],
+            "quality": "Feature morfometriche calcolate localmente sul poligono",
+        },
+        {
+            "provider": ai["provider"],
+            "dataset": ai["model"],
+            "services": ["Interpretazione strutturata"],
+            "quality": "Solo metriche aggregate; nessuna prescrizione automatica",
+        },
+    ]
+    if land_cover is not None:
+        provenance.append({
+            "provider": "Copernicus Land Monitoring Service",
+            "dataset": "CLC+ Backbone 2021 raster 10 m",
+            "services": ["Download WEkEO (una-tantum)"],
+            "quality": "Statistiche zonali calcolate localmente sul poligono",
+        })
+    result = {
         "status": "ready",
         "analysisId": analysis_id,
         "generatedAt": generated_at,
@@ -181,20 +204,9 @@ def build_field_analysis(
         "vegetation": vegetation,
         "terrain": terrain,
         "ai": ai,
-        "provenance": [
-            CATALOG_PROVENANCE,
-            {
-                "provider": "Copernicus DEM GLO-30",
-                "dataset": "Digital Elevation Model 30 m",
-                "services": ["Process API"],
-                "quality": "Feature morfometriche calcolate localmente sul poligono",
-            },
-            {
-                "provider": ai["provider"],
-                "dataset": ai["model"],
-                "services": ["Interpretazione strutturata"],
-                "quality": "Solo metriche aggregate; nessuna prescrizione automatica",
-            },
-        ],
+        "provenance": provenance,
         "disclaimer": DISCLAIMER,
     }
+    if land_cover is not None:
+        result["landCover"] = land_cover
+    return result

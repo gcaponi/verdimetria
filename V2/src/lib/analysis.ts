@@ -59,6 +59,14 @@ export interface FieldAnalysis {
     resolutionMeters: number;
     validPixels: number;
   };
+  landCover?: {
+    year: number;
+    source: string;
+    resolutionMeters: number;
+    dominantClass: number;
+    classes: Array<{ code: number; label: string; share: number; hectares: number }>;
+    validPixels: number;
+  };
   ai: {
     provider: string;
     model: string;

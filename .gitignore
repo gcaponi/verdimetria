@@ -19,6 +19,7 @@ dist/
 *.key
 data/raw/*
 data/processed/*
+data/clc/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 outputs/*

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 from celery import shared_task
@@ -25,11 +26,23 @@ from src.ingestion.catalog_api import fetch_catalog_items
 from src.ingestion.dem_api import fetch_dem
 from src.ingestion.process_api import get_oauth_session
 from src.ingestion.statistical_api import fetch_ndvi_statistics
+from src.landcover import compute_land_cover
 from src.terrain import compute_morphometry
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
+
+CLC_PLUS_RASTER_ENV = "CLC_PLUS_RASTER_PATH"
+
+
+def _compute_land_cover_if_configured(area: AnalysisArea) -> dict[str, Any] | None:
+    """Blocco landCover opzionale: attivo solo se il raster CLC+ e' deployato."""
+    raster_path = os.getenv(CLC_PLUS_RASTER_ENV, "").strip()
+    if not raster_path:
+        logger.info("landcover_skipped: %s non configurata", CLC_PLUS_RASTER_ENV)
+        return None
+    return compute_land_cover(raster_path, area)
 
 
 def _set_progress(job: AnalysisJob, step: str) -> None:
@@ -89,6 +102,9 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
     dem = fetch_dem(area, oauth=oauth)
     terrain = compute_morphometry(dem, area)
 
+    _set_progress(job, "landcover")
+    land_cover = _compute_land_cover_if_configured(area)
+
     _set_progress(job, "ai")
     ai = generate_insights({
         "areaHectares": float(boundary.area_hectares),
@@ -110,6 +126,7 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
         catalog=catalog,
         vegetation=vegetation,
         terrain=terrain,
+        land_cover=land_cover,
         ai=ai,
     )
 

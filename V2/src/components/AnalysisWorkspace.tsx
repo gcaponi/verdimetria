@@ -215,6 +215,37 @@ function Overview({
           </div>
         ))}
       </div>
+      {analysis?.landCover && (
+        <div className="border border-slate-800 bg-slate-900/40 p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-[12px] font-semibold text-slate-200">
+              Copertura del suolo — CLC+ Backbone {analysis.landCover.year}
+            </h3>
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">
+              Copernicus CLMS · {analysis.landCover.resolutionMeters} m
+            </span>
+          </div>
+          <ul className="mt-3 space-y-2">
+            {analysis.landCover.classes.map((entry) => (
+              <li key={entry.code}>
+                <div className="flex items-baseline justify-between gap-3 text-[12px]">
+                  <span className="text-slate-300">{entry.label}</span>
+                  <span className="shrink-0 text-slate-500">
+                    {(entry.share * 100).toLocaleString("it-IT", { maximumFractionDigits: 1 })}% ·{" "}
+                    {entry.hectares.toLocaleString("it-IT", { maximumFractionDigits: 2 })} ha
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                  <div
+                    className="h-full rounded-full bg-lime-400/70"
+                    style={{ width: `${Math.max(2, entry.share * 100)}%` }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <StatusPanel
           icon={CheckCircle2}

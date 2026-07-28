@@ -92,6 +92,18 @@ TERRAIN_RESULT: dict[str, Any] = {
     "validPixels": 30,
 }
 
+LAND_COVER_RESULT: dict[str, Any] = {
+    "year": 2021,
+    "source": "CLC+ Backbone",
+    "resolutionMeters": 10,
+    "dominantClass": 7,
+    "classes": [
+        {"code": 7, "label": "Erbacee periodiche (seminativi)", "share": 0.8, "hectares": 2.1},
+        {"code": 4, "label": "Bosco di latifoglie sempreverdi", "share": 0.2, "hectares": 0.5},
+    ],
+    "validPixels": 260,
+}
+
 
 @pytest.fixture
 def api_client() -> APIClient:
@@ -401,3 +413,56 @@ def test_completed_task_is_not_reexecuted(
     assert job.status == AnalysisJob.Status.COMPLETED
     assert job.attempts == 1
     catalog_mock.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_task_includes_land_cover_when_raster_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    user: User,
+    field: Field,
+) -> None:
+    _mock_pipeline(monkeypatch)
+    monkeypatch.setenv("CLC_PLUS_RASTER_PATH", "/tmp/clc-plus.tif")
+    monkeypatch.setattr(
+        "backend.fields.tasks.compute_land_cover", lambda *a, **k: LAND_COVER_RESULT
+    )
+    params = build_job_params(field)
+    job = AnalysisJob.objects.create(
+        field=field,
+        owner=user,
+        boundary_version=params["boundary_version"],
+        idempotency_key=compute_idempotency_key(field, params),
+        params=params,
+    )
+
+    run_analysis_job.run(str(job.pk))
+
+    job.refresh_from_db()
+    assert job.status == AnalysisJob.Status.COMPLETED
+    assert job.result["landCover"] == LAND_COVER_RESULT
+    providers = [p["provider"] for p in job.result["provenance"]]
+    assert "Copernicus Land Monitoring Service" in providers
+
+
+@pytest.mark.django_db
+def test_task_omits_land_cover_when_raster_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    user: User,
+    field: Field,
+) -> None:
+    _mock_pipeline(monkeypatch)
+    monkeypatch.delenv("CLC_PLUS_RASTER_PATH", raising=False)
+    params = build_job_params(field)
+    job = AnalysisJob.objects.create(
+        field=field,
+        owner=user,
+        boundary_version=params["boundary_version"],
+        idempotency_key=compute_idempotency_key(field, params),
+        params=params,
+    )
+
+    run_analysis_job.run(str(job.pk))
+
+    job.refresh_from_db()
+    assert job.status == AnalysisJob.Status.COMPLETED
+    assert "landCover" not in job.result
