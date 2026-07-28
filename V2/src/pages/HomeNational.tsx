@@ -267,10 +267,10 @@ export default function HomeNational() {
           <Source icon={<Satellite className="h-4 w-4" />} label="Layer satellitari" detail="Sentinel-2 · WMS Copernicus Data Space Ecosystem" href="https://dataspace.copernicus.eu/" />
           <Source icon={<CloudSun className="h-4 w-4" />} label="Meteo" detail="Open-Meteo · osservazioni e previsioni sul centroide" href="https://open-meteo.com/" />
           <Source icon={<Database className="h-4 w-4" />} label="Proprietà del suolo" detail="SoilGrids WMS · ISRIC World Soil Information" href="https://soilgrids.org/" />
-          <Source icon={<Layers className="h-4 w-4" />} label="Territorio Sicilia, prossima integrazione" detail="Geoportale S.I.T.R. · Regione Siciliana" href="https://www.sitr.regione.sicilia.it/geoportale/it/home/servicecatalog" />
+          <Source icon={<Layers className="h-4 w-4" />} label="Territorio nazionale, prossima integrazione" detail="Fonti nazionali: ISPRA, MASE Geoportale, INGV TINITALY, CLC+ Copernicus" href="https://gn.mase.gov.it/portale" />
         </div>
         <p className="mt-4 border-t border-slate-800 pt-3 text-slate-500">
-          <strong className="text-slate-400">Disponibilità attuale:</strong> basemap, layer visuali Sentinel-2, SoilGrids, meteo, Catalog, serie NDVI quantitativa e AI da evidenze sono live. S.I.T.R., anomaly detection e PCA restano in integrazione. Nessun indicatore sintetico viene presentato come dato reale.
+          <strong className="text-slate-400">Disponibilità attuale:</strong> basemap, layer visuali Sentinel-2, SoilGrids, meteo, Catalog, serie NDVI quantitativa, morfometria da DEM nazionale e AI da evidenze sono live. Land cover nazionale (CLC+), anomaly detection e PCA restano in integrazione. Nessun indicatore sintetico viene presentato come dato reale.
         </p>
       </footer>
     </div>

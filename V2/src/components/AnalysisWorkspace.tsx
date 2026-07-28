@@ -323,7 +323,7 @@ function GeologyAnalysis({
           icon={LockKeyhole}
           tone="pending"
           title="Analisi non calcolata"
-          items={["Isolation Forest", "PCA multibanda", "Top anomalie", "Layer ISPRA/S.I.T.R."]}
+          items={["Isolation Forest", "PCA multibanda", "Top anomalie", "Layer ISPRA/MASE nazionali"]}
         />
       </div>
     </div>
