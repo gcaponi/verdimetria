@@ -22,8 +22,10 @@ from backend.fields.pipeline import (
 )
 from src.domain import AnalysisArea
 from src.ingestion.catalog_api import fetch_catalog_items
+from src.ingestion.dem_api import fetch_dem
 from src.ingestion.process_api import get_oauth_session
 from src.ingestion.statistical_api import fetch_ndvi_statistics
+from src.terrain import compute_morphometry
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,10 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
         raise ValueError("Nessuna osservazione NDVI valida nel periodo selezionato")
     vegetation = summarize_vegetation(points)
 
+    _set_progress(job, "terrain")
+    dem = fetch_dem(area, oauth=oauth)
+    terrain = compute_morphometry(dem, area)
+
     _set_progress(job, "ai")
     ai = generate_insights({
         "areaHectares": float(boundary.area_hectares),
@@ -103,6 +109,7 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
         resolution_m=params["resolution_m"],
         catalog=catalog,
         vegetation=vegetation,
+        terrain=terrain,
         ai=ai,
     )
 

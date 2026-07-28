@@ -52,6 +52,13 @@ export interface FieldAnalysis {
     validObservations: number;
     totalValidPixels: number;
   };
+  terrain: {
+    elevation: { min: number; max: number; mean: number };
+    slope: { mean: number; max: number };
+    aspectDominant: string | null;
+    resolutionMeters: number;
+    validPixels: number;
+  };
   ai: {
     provider: string;
     model: string;

@@ -183,6 +183,16 @@ function Overview({
       detail: "Statistical API · pixel validi",
     },
     {
+      label: "Pendenza media",
+      value: analysis ? `${analysis.terrain.slope.mean.toLocaleString("it-IT", { maximumFractionDigits: 1 })}°` : status === "loading" ? "..." : "n/d",
+      detail: analysis ? `max ${analysis.terrain.slope.max.toLocaleString("it-IT", { maximumFractionDigits: 1 })}° · esposizione ${analysis.terrain.aspectDominant ?? "n/d"}` : "Copernicus DEM 30 m",
+    },
+    {
+      label: "Quota",
+      value: analysis ? `${analysis.terrain.elevation.mean.toLocaleString("it-IT", { maximumFractionDigits: 0 })} m` : status === "loading" ? "..." : "n/d",
+      detail: analysis ? `${analysis.terrain.elevation.min.toLocaleString("it-IT", { maximumFractionDigits: 0 })}–${analysis.terrain.elevation.max.toLocaleString("it-IT", { maximumFractionDigits: 0 })} m s.l.m.` : "Copernicus DEM 30 m",
+    },
+    {
       label: "Interpretazione",
       value: analysis ? (analysis.ai.status === "generated" ? "AI" : "Regole") : status === "loading" ? "..." : "n/d",
       detail: analysis?.ai.model ?? "in elaborazione",

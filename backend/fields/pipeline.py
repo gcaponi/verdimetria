@@ -163,6 +163,7 @@ def build_field_analysis(
     catalog: dict[str, Any],
     vegetation: dict[str, Any],
     ai: dict[str, Any],
+    terrain: dict[str, Any],
 ) -> dict[str, Any]:
     centroid = area.geometry.centroid
     return {
@@ -178,9 +179,16 @@ def build_field_analysis(
         },
         "catalog": catalog,
         "vegetation": vegetation,
+        "terrain": terrain,
         "ai": ai,
         "provenance": [
             CATALOG_PROVENANCE,
+            {
+                "provider": "Copernicus DEM GLO-30",
+                "dataset": "Digital Elevation Model 30 m",
+                "services": ["Process API"],
+                "quality": "Feature morfometriche calcolate localmente sul poligono",
+            },
             {
                 "provider": ai["provider"],
                 "dataset": ai["model"],

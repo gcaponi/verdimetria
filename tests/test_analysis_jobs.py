@@ -84,6 +84,14 @@ AI_RESULT: dict[str, Any] = {
     "insights": [],
 }
 
+TERRAIN_RESULT: dict[str, Any] = {
+    "elevation": {"min": 10.0, "max": 25.0, "mean": 17.5},
+    "slope": {"mean": 3.2, "max": 8.1},
+    "aspectDominant": "SE",
+    "resolutionMeters": 30,
+    "validPixels": 30,
+}
+
 
 @pytest.fixture
 def api_client() -> APIClient:
@@ -122,6 +130,10 @@ def _mock_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "backend.fields.tasks.fetch_ndvi_statistics", lambda *a, **k: STATISTICAL_PAYLOAD
+    )
+    monkeypatch.setattr("backend.fields.tasks.fetch_dem", lambda *a, **k: b"dem")
+    monkeypatch.setattr(
+        "backend.fields.tasks.compute_morphometry", lambda *a, **k: TERRAIN_RESULT
     )
     monkeypatch.setattr("backend.fields.tasks.generate_insights", lambda metrics: AI_RESULT)
 
@@ -298,6 +310,7 @@ def test_task_completes_job_with_field_analysis(
     assert result["status"] == "ready"
     assert result["vegetation"]["validObservations"] == 2
     assert result["catalog"]["sceneCount"] == 1
+    assert result["terrain"] == TERRAIN_RESULT
     assert result["ai"] == AI_RESULT
     assert result["provenance"]
 
