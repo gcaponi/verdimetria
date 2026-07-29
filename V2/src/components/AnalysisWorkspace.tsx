@@ -4,6 +4,7 @@ import {
   CalendarDays,
   CheckCircle2,
   CloudSun,
+  Download,
   FlaskConical,
   Leaf,
   LayoutDashboard,
@@ -411,11 +412,22 @@ function AnalysisRunStatus({ status, analysis, error, onRetry }: AnalysisResultP
               : error ?? "Analisi non disponibile"}
         </span>
       </div>
-      {status === "error" && (
-        <button type="button" onClick={onRetry} className="flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200">
-          <RefreshCw className="h-3.5 w-3.5" /> Riprova
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {status === "ready" && analysis && (
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="no-print flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-lime-400/50 hover:text-lime-200"
+          >
+            <Download className="h-3.5 w-3.5" /> Esporta PDF
+          </button>
+        )}
+        {status === "error" && (
+          <button type="button" onClick={onRetry} className="no-print flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200">
+            <RefreshCw className="h-3.5 w-3.5" /> Riprova
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -92,3 +92,32 @@
     opacity: 0.85;
   }
 }
+/* Stampa report PDF: layout chiaro, niente UI interattiva */
+@media print {
+  * {
+    background: transparent !important;
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  header,
+  nav,
+  button,
+  .leaflet-container,
+  .no-print {
+    display: none !important;
+  }
+  main,
+  body {
+    background: #fff !important;
+  }
+  section,
+  div {
+    break-inside: avoid-page;
+  }
+  svg,
+  canvas {
+    max-width: 100% !important;
+  }
+}
