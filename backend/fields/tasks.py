@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from celery import shared_task
@@ -34,6 +35,20 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 CLC_PLUS_RASTER_ENV = "CLC_PLUS_RASTER_PATH"
+
+
+def _compute_terrain(area: AnalysisArea, oauth: Any) -> dict[str, Any]:
+    """Morfometria da TINITALY 10 m se la cache e' configurata, fallback CDSE 30 m."""
+    cache_dir = os.getenv("TINITALY_CACHE_DIR", "").strip()
+    if cache_dir:
+        from src.ingestion.tinitaly import compute_morphometry_tinitaly
+
+        try:
+            return compute_morphometry_tinitaly(area, Path(cache_dir))
+        except Exception as error:
+            logger.warning("tinitaly_fallback: %s", error)
+    dem = fetch_dem(area, oauth=oauth)
+    return compute_morphometry(dem, area)
 
 
 def _compute_land_cover_if_configured(area: AnalysisArea) -> dict[str, Any] | None:
@@ -99,8 +114,7 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
     vegetation = summarize_vegetation(points)
 
     _set_progress(job, "terrain")
-    dem = fetch_dem(area, oauth=oauth)
-    terrain = compute_morphometry(dem, area)
+    terrain = _compute_terrain(area, oauth)
 
     _set_progress(job, "landcover")
     land_cover = _compute_land_cover_if_configured(area)

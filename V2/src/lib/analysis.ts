@@ -57,6 +57,7 @@ export interface FieldAnalysis {
     slope: { mean: number; max: number };
     aspectDominant: string | null;
     resolutionMeters: number;
+    source?: string;
     validPixels: number;
   };
   landCover?: {

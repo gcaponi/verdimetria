@@ -170,9 +170,9 @@ def build_field_analysis(
     provenance = [
         CATALOG_PROVENANCE,
         {
-            "provider": "Copernicus DEM GLO-30",
-            "dataset": "Digital Elevation Model 30 m",
-            "services": ["Process API"],
+            "provider": terrain.get("source", "Copernicus DEM GLO-30"),
+            "dataset": f"Digital Elevation Model {terrain.get('resolutionMeters', 30)} m",
+            "services": ["Download tile lazy" if "TINITALY" in terrain.get("source", "") else "Process API"],
             "quality": "Feature morfometriche calcolate localmente sul poligono",
         },
         {

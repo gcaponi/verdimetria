@@ -466,3 +466,74 @@ def test_task_omits_land_cover_when_raster_not_configured(
     job.refresh_from_db()
     assert job.status == AnalysisJob.Status.COMPLETED
     assert "landCover" not in job.result
+
+
+TINITALY_RESULT: dict[str, Any] = {
+    "elevation": {"min": 185.0, "max": 206.0, "mean": 195.5},
+    "slope": {"mean": 6.4, "max": 9.6},
+    "aspectDominant": "S",
+    "resolutionMeters": 10,
+    "source": "TINITALY 1.1 (INGV, CC BY 4.0)",
+    "validPixels": 260,
+}
+
+
+@pytest.mark.django_db
+def test_task_uses_tinitaly_when_cache_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    user: User,
+    field: Field,
+) -> None:
+    _mock_pipeline(monkeypatch)
+    monkeypatch.setenv("TINITALY_CACHE_DIR", "/tmp/tinitaly-cache")
+    tinitaly_mock = Mock(return_value=TINITALY_RESULT)
+    monkeypatch.setattr(
+        "src.ingestion.tinitaly.compute_morphometry_tinitaly", tinitaly_mock
+    )
+    dem_mock = Mock(side_effect=AssertionError("non deve chiamare il DEM CDSE"))
+    monkeypatch.setattr("backend.fields.tasks.fetch_dem", dem_mock)
+    params = build_job_params(field)
+    job = AnalysisJob.objects.create(
+        field=field,
+        owner=user,
+        boundary_version=params["boundary_version"],
+        idempotency_key=compute_idempotency_key(field, params),
+        params=params,
+    )
+
+    run_analysis_job.run(str(job.pk))
+
+    job.refresh_from_db()
+    assert job.status == AnalysisJob.Status.COMPLETED
+    assert job.result["terrain"] == TINITALY_RESULT
+    tinitaly_mock.assert_called_once()
+    providers = [p["provider"] for p in job.result["provenance"]]
+    assert any("TINITALY" in p for p in providers)
+
+
+@pytest.mark.django_db
+def test_task_falls_back_to_cdse_dem_when_tinitaly_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    user: User,
+    field: Field,
+) -> None:
+    _mock_pipeline(monkeypatch)
+    monkeypatch.setenv("TINITALY_CACHE_DIR", "/tmp/tinitaly-cache")
+    monkeypatch.setattr(
+        "src.ingestion.tinitaly.compute_morphometry_tinitaly",
+        Mock(side_effect=ValueError("tile non disponibile")),
+    )
+    params = build_job_params(field)
+    job = AnalysisJob.objects.create(
+        field=field,
+        owner=user,
+        boundary_version=params["boundary_version"],
+        idempotency_key=compute_idempotency_key(field, params),
+        params=params,
+    )
+
+    run_analysis_job.run(str(job.pk))
+
+    job.refresh_from_db()
+    assert job.status == AnalysisJob.Status.COMPLETED
+    assert job.result["terrain"] == TERRAIN_RESULT

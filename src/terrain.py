@@ -1,6 +1,6 @@
 """Feature morfometriche da DEM: quota, pendenza, esposizione dominante.
 
-Modulo puro: GeoTIFF bytes + AnalysisArea -> dict pronto per il contratto
+Modulo puro: GeoTIFF bytes oppure array+transform -> dict per il contratto
 FieldAnalysis. Nessuna chiamata di rete.
 """
 
@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import rasterio
 import rasterio.mask
+from affine import Affine
+from rasterio.features import geometry_mask
 from scipy.ndimage import binary_erosion
 from shapely.geometry import mapping
 
@@ -38,9 +40,40 @@ def compute_morphometry(tiff_bytes: bytes, area: AnalysisArea) -> dict[str, Any]
             geometry = [mapping(area.projected_geometry(dataset_crs))]
             masked, transform = rasterio.mask.mask(dataset, geometry, crop=True, nodata=np.nan)
             elevation = masked[0].astype(np.float64)
-            resolution_m = float(abs(transform.a))
 
     valid = ~np.isnan(elevation)
+    return _stats(elevation, valid, transform, "Copernicus DEM GLO-30")
+
+
+def compute_morphometry_from_array(
+    elevation: np.ndarray,
+    transform: Affine,
+    geometry: Any,
+    crs: str,
+    source: str,
+) -> dict[str, Any]:
+    """Variante array-based (es. tile TINITALY gia' in EPSG:32632).
+
+    `geometry` e' la geometria Shapely gia' proiettata in `crs`, usata per
+    mascherare i pixel fuori poligono.
+    """
+    inside = geometry_mask(
+        [mapping(geometry)],
+        out_shape=elevation.shape,
+        transform=transform,
+        invert=True,
+    )
+    valid = inside & ~np.isnan(elevation)
+    return _stats(elevation, valid, transform, source)
+
+
+def _stats(
+    elevation: np.ndarray,
+    valid: np.ndarray,
+    transform: Affine,
+    source: str,
+) -> dict[str, Any]:
+    resolution_m = float(abs(transform.a))
     valid_pixels = int(valid.sum())
     if valid_pixels == 0:
         raise ValueError("Il DEM non contiene pixel validi sul poligono")
@@ -84,5 +117,6 @@ def compute_morphometry(tiff_bytes: bytes, area: AnalysisArea) -> dict[str, Any]
         },
         "aspectDominant": aspect_dominant,
         "resolutionMeters": int(round(resolution_m)),
+        "source": source,
         "validPixels": valid_pixels,
     }
