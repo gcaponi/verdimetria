@@ -80,10 +80,10 @@ export const WMS_LAYERS: WmsLayer[] = [
     group: "vegetation",
     legend: {
       kind: "gradient",
-      gradient: "linear-gradient(90deg,#7c2d12,#fef3c7,#bae6fd,#0284c7,#0c4a6e)",
-      lowLabel: "asciutto",
-      highLabel: "acqua",
-      note: "Scala qualitativa del layer visuale CDSE.",
+      gradient: "linear-gradient(90deg,#0a0a0a,#737373,#e5e5e5)",
+      lowLabel: "asciutto (scuro)",
+      highLabel: "acqua (chiaro)",
+      note: "Il layer CDSE rende in scala di grigi: scuro = secco, chiaro = umido/acqua.",
     },
   },
   {
