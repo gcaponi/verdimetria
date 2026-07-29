@@ -90,7 +90,7 @@ def ensure_tile(code: str, cache_dir: Path) -> Path | None:
     cached = cache_dir / f"{code}.tif"
     if cached.exists():
         return cached
-    url = f"{TINITALY_BASE_URL}/{code}/{code}.zip"
+    url = f"{TINITALY_BASE_URL}/{code}_s10/{code}_s10.zip"
     response = requests.get(url, timeout=REQUEST_TIMEOUT)
     if response.status_code == 404:
         return None

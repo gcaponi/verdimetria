@@ -95,8 +95,11 @@ def test_ensure_tile_uses_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 def test_ensure_tile_missing_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     response = Mock(status_code=404)
-    monkeypatch.setattr(tinitaly.requests, "get", Mock(return_value=response))
+    get_mock = Mock(return_value=response)
+    monkeypatch.setattr(tinitaly.requests, "get", get_mock)
     assert ensure_tile("w00000", tmp_path) is None
+    url = get_mock.call_args[0][0]
+    assert url.endswith("/w00000_s10/w00000_s10.zip")
 
 
 def test_morphometry_tinitaly_on_ramp(area: AnalysisArea, tmp_path: Path) -> None:
