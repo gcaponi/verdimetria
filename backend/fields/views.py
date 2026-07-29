@@ -4,8 +4,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from backend.accounts.models import User
 from backend.fields.jobs import build_job_params, compute_idempotency_key
@@ -110,3 +112,41 @@ class AnalysisJobViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.is_anonymous:
             return AnalysisJob.objects.none()
         return AnalysisJob.objects.filter(owner=self.request.user)
+
+
+class DemoAnalysisView(APIView):
+    """Campo dimostrativo pubblico (PRD 9.2): read-only, nessuna autenticazione.
+
+    Serve l'ultimo job completato del campo marcato `is_demo`, con il confine
+    per la visualizzazione su mappa. Mai dati di campi utente reali.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        field = Field.objects.filter(is_demo=True).order_by("-created_at").first()
+        if field is None:
+            return Response(
+                {"detail": "Campo dimostrativo non configurato"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        job = (
+            field.analysis_jobs.filter(status=AnalysisJob.Status.COMPLETED)
+            .order_by("-completed_at")
+            .first()
+        )
+        if job is None:
+            return Response(
+                {"detail": "Analisi dimostrativa non ancora disponibile"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        boundary = field.boundaries.first()
+        return Response({
+            "field": {
+                "id": str(field.pk),
+                "name": field.name,
+                "boundary": BoundaryVersionSerializer(boundary).data if boundary else None,
+            },
+            "analysis": job.result,
+            "generatedAt": job.completed_at,
+        })

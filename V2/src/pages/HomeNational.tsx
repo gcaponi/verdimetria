@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Link } from "react-router";
 import { useDefaultLayout } from "react-resizable-panels";
 import MapPanelNational from "@/components/MapPanelNational";
 import AnalysisWorkspace from "@/components/AnalysisWorkspace";
@@ -253,6 +254,11 @@ export default function HomeNational() {
             <h1 className="mt-4 text-lg font-semibold text-slate-100">Seleziona il primo campo</h1>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">
               Disegna un rettangolo o un poligono in qualsiasi area d’Italia.
+            </p>
+            <p className="mt-3 text-sm">
+              <Link to="/demo" className="font-semibold text-lime-300 underline hover:text-lime-200">
+                Oppure guarda il campo dimostrativo →
+              </Link>
             </p>
           </div>
         </section>

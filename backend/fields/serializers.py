@@ -7,7 +7,7 @@ from rest_framework.request import Request
 
 from backend.accounts.models import User
 from backend.fields.models import AnalysisJob, BoundaryVersion, Field
-from backend.fields.services import append_boundary
+from backend.fields.services import append_boundary, ensure_italy_coverage
 from src.domain import AnalysisArea
 
 
@@ -75,7 +75,9 @@ class FieldSerializer(serializers.ModelSerializer):
 
     def validate_boundary(self, value: dict[str, Any]) -> AnalysisArea:
         try:
-            return AnalysisArea.from_geojson("Campo", value)
+            area = AnalysisArea.from_geojson("Campo", value)
+            ensure_italy_coverage(area)
+            return area
         except (TypeError, ValueError) as error:
             raise serializers.ValidationError(str(error)) from error
 
@@ -106,7 +108,9 @@ class BoundaryCreateSerializer(serializers.Serializer):
     def validate_geometry(self, value: dict[str, Any]) -> AnalysisArea:
         field = cast(Field, self.context["field"])
         try:
-            return AnalysisArea.from_geojson(field.name, value)
+            area = AnalysisArea.from_geojson(field.name, value)
+            ensure_italy_coverage(area)
+            return area
         except (TypeError, ValueError) as error:
             raise serializers.ValidationError(str(error)) from error
 

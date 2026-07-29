@@ -31,6 +31,7 @@ interface Props {
   layers: WmsLayer[];
   activeLayerId: string;
   onLayerChange: (layerId: string) => void;
+  precomputedAnalysis?: FieldAnalysis;
 }
 
 const TABS: Array<{ id: TabId; label: string; icon: typeof Leaf }> = [
@@ -47,6 +48,7 @@ export default function AnalysisWorkspace({
   layers,
   activeLayerId,
   onLayerChange,
+  precomputedAnalysis,
 }: Props) {
   const { getAuthHeader, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -61,11 +63,12 @@ export default function AnalysisWorkspace({
   const currentState = analysisState.key === requestKey
     ? analysisState
     : { key: requestKey, analysis: null, status: "loading" as const, error: null };
-  const analysis = currentState.analysis;
-  const analysisStatus = currentState.status;
-  const analysisError = currentState.error;
+  const analysis = precomputedAnalysis ?? currentState.analysis;
+  const analysisStatus: AnalysisStatus = precomputedAnalysis ? "ready" : currentState.status;
+  const analysisError = precomputedAnalysis ? null : currentState.error;
 
   useEffect(() => {
+    if (precomputedAnalysis) return;
     const controller = new AbortController();
     getAuthHeader()
       .then((authorization) => analyzeArea(area, authorization, controller.signal))
@@ -83,7 +86,7 @@ export default function AnalysisWorkspace({
         });
       });
     return () => controller.abort();
-  }, [area, requestKey, getAuthHeader, logout]);
+  }, [area, requestKey, getAuthHeader, logout, precomputedAnalysis]);
 
   return (
     <section className="border-y border-slate-800">

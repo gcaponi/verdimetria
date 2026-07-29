@@ -12,6 +12,7 @@ class Field(models.Model):
         related_name="fields",
     )
     name = models.CharField(max_length=160)
+    is_demo = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
