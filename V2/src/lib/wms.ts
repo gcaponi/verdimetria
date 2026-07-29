@@ -38,10 +38,10 @@ export const WMS_LAYERS: WmsLayer[] = [
     group: "vegetation",
     legend: {
       kind: "gradient",
-      gradient: "linear-gradient(90deg,#7f1d1d,#ef4444,#facc15,#a3e635,#166534)",
-      lowLabel: "basso",
-      highLabel: "alto",
-      note: "Scala visuale WMS; i valori quantitativi arrivano dalla Process API.",
+      gradient: "linear-gradient(90deg,#d01010,#701010,#787810,#e0e030,#30e0e0)",
+      lowLabel: "basso (rosso)",
+      highLabel: "alto (turchese)",
+      note: "Rampa reale del layer CDSE: rosso = suolo nudo/acqua, giallo = vegetazione moderata, turchese = vegetazione vigorosa. Valori quantitativi dalla Process API.",
     },
   },
   {
@@ -92,6 +92,10 @@ export const WMS_LAYERS: WmsLayer[] = [
     detail: "Composito multispettrale visuale",
     provider: "cdse",
     group: "vegetation",
+    legend: {
+      kind: "gradient",
+      note: "Falso colore (SWIR/NIR/verde), nessuna scala numerica: verde brillante = vegetazione vigorosa, marrone/tenue = suolo nudo o vegetazione stressata, acqua scura.",
+    },
   },
   {
     id: "GEOLOGY",
@@ -99,6 +103,10 @@ export const WMS_LAYERS: WmsLayer[] = [
     detail: "Composito multispettrale visuale, non carta geologica",
     provider: "cdse",
     group: "vegetation",
+    legend: {
+      kind: "gradient",
+      note: "Falso colore multispettrale, nessuna scala numerica: tonalita' di terra per suoli e rocce, verde per vegetazione, scuro per acqua. Non e' una carta geologica.",
+    },
   },
   soilLayer("NITROGEN", "Azoto totale (N)", "nitrogen", "nitrogen_0-5cm_mean"),
   soilLayer("PH", "pH in acqua", "phh2o", "phh2o_0-5cm_mean"),

@@ -516,6 +516,15 @@ function LayerLegend({ layer }: { layer: WmsLayer }) {
     );
   }
 
+  if (!legend.gradient) {
+    // Compositi falsi-colore: nessuna scala numerica, solo semantica dei colori.
+    return (
+      <div className="mt-2 border-t border-slate-700/70 pt-2 text-[10px] leading-relaxed text-slate-500">
+        {legend.note ?? "Layer visuale WMS senza scala numerica pubblicata."}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-2 border-t border-slate-700/70 pt-2">
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
