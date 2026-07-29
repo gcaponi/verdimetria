@@ -105,7 +105,7 @@ export const WMS_LAYERS: WmsLayer[] = [
     group: "vegetation",
     legend: {
       kind: "gradient",
-      note: "Falso colore multispettrale, nessuna scala numerica: tonalita' di terra per suoli e rocce, verde per vegetazione, scuro per acqua. Non e' una carta geologica.",
+      note: "Falso colore SWIR/NIR/visibile, nessuna scala numerica: suoli nudi e rocce in toni marrone-rossastri, vegetazione in toni ciano-verdi, acqua scura. Lettura visuale di supporto: non e' una carta geologica (quella arriva da ISPRA).",
     },
   },
   soilLayer("NITROGEN", "Azoto totale (N)", "nitrogen", "nitrogen_0-5cm_mean"),
