@@ -2,7 +2,7 @@ from typing import Any, cast
 
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
@@ -11,12 +11,13 @@ from rest_framework.views import APIView
 
 from backend.accounts.models import User
 from backend.fields.jobs import build_job_params, compute_idempotency_key
-from backend.fields.models import AnalysisJob, Field
+from backend.fields.models import AnalysisJob, Field, Intervention
 from backend.fields.serializers import (
     AnalysisJobSerializer,
     BoundaryCreateSerializer,
     BoundaryVersionSerializer,
     FieldSerializer,
+    InterventionSerializer,
 )
 from backend.fields.tasks import run_analysis_job
 
@@ -103,6 +104,17 @@ class FieldViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=True, methods=("get", "post"), url_path="interventions")
+    def interventions(self, request: Request, **kwargs: Any) -> Response:
+        field = self.get_object()
+        if request.method == "GET":
+            queryset = field.interventions.all()
+            return Response(InterventionSerializer(queryset, many=True).data)
+        serializer = InterventionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(field=field, owner=cast(User, request.user))
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
 
 class AnalysisJobViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AnalysisJobSerializer
@@ -112,6 +124,17 @@ class AnalysisJobViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.is_anonymous:
             return AnalysisJob.objects.none()
         return AnalysisJob.objects.filter(owner=self.request.user)
+
+
+class InterventionViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    """DELETE /api/v1/interventions/:id/ — solo il proprietario."""
+    serializer_class = InterventionSerializer
+    http_method_names = ("delete", "head", "options")
+
+    def get_queryset(self) -> QuerySet[Intervention]:
+        if self.request.user.is_anonymous:
+            return Intervention.objects.none()
+        return Intervention.objects.filter(owner=self.request.user)
 
 
 class DemoAnalysisView(APIView):

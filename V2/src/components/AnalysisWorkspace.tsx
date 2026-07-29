@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertCircle,
+  CalendarDays,
   CheckCircle2,
   CloudSun,
   FlaskConical,
@@ -16,6 +17,7 @@ import {
 import WeatherSection from "@/sections/WeatherSection";
 import VegetationCharts from "@/sections/VegetationCharts";
 import RealInsightsSection from "@/sections/RealInsightsSection";
+import InterventionsSection from "@/sections/InterventionsSection";
 import { analyzeArea } from "@/lib/analysis";
 import type { AnalysisStatus, FieldAnalysis } from "@/lib/analysis";
 import { FieldsApiError } from "@/lib/fields";
@@ -24,7 +26,7 @@ import type { WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
 import { cn } from "@/lib/utils";
 
-type TabId = "overview" | "soil" | "vegetation" | "geology" | "insights" | "weather";
+type TabId = "overview" | "soil" | "vegetation" | "geology" | "insights" | "interventions" | "weather";
 
 interface Props {
   area: MapArea;
@@ -40,6 +42,7 @@ const TABS: Array<{ id: TabId; label: string; icon: typeof Leaf }> = [
   { id: "vegetation", label: "Vegetazione", icon: Leaf },
   { id: "geology", label: "Geologia", icon: Mountain },
   { id: "insights", label: "AI Insights", icon: Sparkles },
+  { id: "interventions", label: "Interventi", icon: CalendarDays },
   { id: "weather", label: "Meteo", icon: CloudSun },
 ];
 
@@ -94,7 +97,7 @@ export default function AnalysisWorkspace({
         aria-label="Analisi del campo"
         className="flex flex-wrap gap-1 border-b border-slate-800 py-2"
       >
-        {TABS.map((tab) => {
+        {TABS.filter((tab) => tab.id !== "interventions" || !precomputedAnalysis).map((tab) => {
           const Icon = tab.icon;
           const active = tab.id === activeTab;
           return (
@@ -157,6 +160,9 @@ export default function AnalysisWorkspace({
             error={analysisError}
             onRetry={() => setRequestVersion((version) => version + 1)}
           />
+        )}
+        {activeTab === "interventions" && !precomputedAnalysis && (
+          <InterventionsSection fieldId={area.id} />
         )}
         {activeTab === "weather" && <WeatherSection field={area} />}
       </div>

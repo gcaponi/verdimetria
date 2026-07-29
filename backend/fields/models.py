@@ -100,3 +100,38 @@ class AnalysisJob(models.Model):
 
     def __str__(self) -> str:
         return f"{self.field.name} · {self.status}"
+
+
+class Intervention(models.Model):
+    """Voce del diario degli interventi agricoli sul campo (PRD: quaderno)."""
+
+    class Kind(models.TextChoices):
+        IRRIGATION = "irrigation", "Irrigazione"
+        FERTILIZATION = "fertilization", "Concimazione"
+        TREATMENT = "treatment", "Trattamento"
+        SOWING = "sowing", "Semina"
+        HARVEST = "harvest", "Raccolta"
+        NOTE = "note", "Nota"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    field = models.ForeignKey(
+        Field,
+        on_delete=models.CASCADE,
+        related_name="interventions",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="interventions",
+    )
+    kind = models.CharField(max_length=16, choices=Kind)
+    date = models.DateField()
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-date", "-created_at",)
+        indexes = [models.Index(fields=("field", "-date"))]
+
+    def __str__(self) -> str:
+        return f"{self.field.name} · {self.get_kind_display()} · {self.date}"

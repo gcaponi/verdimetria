@@ -6,9 +6,16 @@ from rest_framework import serializers
 from rest_framework.request import Request
 
 from backend.accounts.models import User
-from backend.fields.models import AnalysisJob, BoundaryVersion, Field
+from backend.fields.models import AnalysisJob, BoundaryVersion, Field, Intervention
 from backend.fields.services import append_boundary, ensure_italy_coverage
 from src.domain import AnalysisArea
+
+
+class InterventionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Intervention
+        fields = ("id", "kind", "date", "notes", "created_at")
+        read_only_fields = ("id", "created_at")
 
 
 class AnalysisJobSerializer(serializers.ModelSerializer):
