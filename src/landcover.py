@@ -22,7 +22,9 @@ CLC_PLUS_YEAR = 2021
 CLC_PLUS_SOURCE = "CLC+ Backbone"
 MAX_CLASSES_IN_REPORT = 5
 
-# Legenda ufficiale CLC+ Backbone raster (Product User Manual EEA, 2024).
+# Legenda ufficiale CLC+ Backbone raster (Product User Manual EEA + file .qml).
+# I codici 253/254/255 NON sono classi land cover: 254 = "Outside area"
+# (mare/fuori copertura), 255 = "No data" — vanno esclusi dai pixel validi.
 CLC_PLUS_CLASSES: dict[int, str] = {
     1: "Suolo sigillato",
     2: "Bosco di aghiformi",
@@ -36,6 +38,9 @@ CLC_PLUS_CLASSES: dict[int, str] = {
     10: "Acqua",
     11: "Neve e ghiaccio",
 }
+
+MIN_CLASS_CODE = 1
+MAX_CLASS_CODE = 11
 
 HECTARES_PER_SQM = 0.0001
 
@@ -64,7 +69,7 @@ def compute_land_cover(source: str | Path | bytes, area: AnalysisArea) -> dict[s
         classes_grid = masked[0]
         pixel_area_ha = abs(transform.a * transform.e) * HECTARES_PER_SQM
 
-    valid = classes_grid > 0
+    valid = (classes_grid >= MIN_CLASS_CODE) & (classes_grid <= MAX_CLASS_CODE)
     valid_pixels = int(valid.sum())
     if valid_pixels == 0:
         raise ValueError("Il raster CLC+ non contiene pixel validi sul poligono")

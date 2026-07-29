@@ -92,3 +92,19 @@ def test_land_cover_without_valid_pixels_raises(area: AnalysisArea) -> None:
 
     with pytest.raises(ValueError, match="pixel validi"):
         compute_land_cover(_synthetic_clc(area, grid_fn), area)
+
+
+def test_land_cover_excludes_outside_area_and_nodata(area: AnalysisArea) -> None:
+    """254 ('Outside area', mare) e 255 ('No data') non contano come pixel validi."""
+    def grid_fn(rows: int, cols: int) -> np.ndarray:
+        grid = np.full((rows, cols), 7, dtype=np.uint8)
+        grid[:, : cols // 2] = 254  # meta' ovest: mare
+        grid[: rows // 4, cols // 2 :] = 255  # angolo: no data
+        return grid
+
+    result = compute_land_cover(_synthetic_clc(area, grid_fn), area)
+
+    codes = {entry["code"] for entry in result["classes"]}
+    assert codes == {7}
+    assert result["classes"][0]["share"] == 1.0
+    assert result["dominantClass"] == 7

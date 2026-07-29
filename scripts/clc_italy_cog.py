@@ -40,12 +40,15 @@ def clip_to_italy(source: Path, output: Path) -> None:
 
         profile = dataset.profile.copy()
         profile.update(
-            driver="COG",
+            driver="GTiff",
+            tiled=True,
+            blockxsize=512,
+            blockysize=512,
             height=int(window.height),
             width=int(window.width),
             transform=dataset.window_transform(window),
             compress="deflate",
-            blocksize=512,
+            bigtiff="IF_SAFER",
             num_threads="ALL_CPUS",
         )
         with rasterio.open(output, "w", **profile) as dest:
