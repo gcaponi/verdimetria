@@ -116,6 +116,10 @@ def test_morphometry_tinitaly_on_ramp(area: AnalysisArea, tmp_path: Path) -> Non
     assert terrain["validPixels"] > 0
 
 
-def test_morphometry_tinitaly_without_tiles_raises(area: AnalysisArea, tmp_path: Path) -> None:
+def test_morphometry_tinitaly_without_tiles_raises(
+    area: AnalysisArea, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    response = Mock(status_code=404)
+    monkeypatch.setattr(tinitaly.requests, "get", Mock(return_value=response))
     with pytest.raises(ValueError, match="Nessun tile TINITALY"):
         compute_morphometry_tinitaly(area, tmp_path)
