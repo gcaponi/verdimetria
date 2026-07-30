@@ -65,18 +65,20 @@ L'adapter conserva fonte, scala e licenza CC BY 4.0 e filtra sul Polygon reale.
 
 ## Prova online
 
-Apri [verdimetria.cais.uno](https://verdimetria.cais.uno/). All'avvio viene
-selezionata una AOI tecnica dimostrativa a Ragusa con dati satellitari reali.
-Puoi:
+Apri [verdimetria.cais.uno](https://verdimetria.cais.uno/). Il sistema reale è
+live: registrazione email-first, disegno del campo su mappa, job di analisi
+asincrono (Catalog → Statistical NDVI/NDMI → morfometria TINITALY 10m → land
+cover CLC+ → AI agronomo DeepSeek), diario interventi, esportazione **report
+agronomico PDF A4** generato server-side. Su `/demo` è pubblico un report
+dimostrativo completo senza account (campo Innovagri reale).
 
-- disegnare un rettangolo o un Polygon e avviare una nuova analisi;
-- consultare scene Catalog, serie NDVI annuale e percentili dell'ultima data;
-- aprire i due grafici nella tab **Vegetazione**;
-- leggere tre insight nella tab **AI Insights**, con provider, modello ed evidenze;
-- ispezionare layer WMS CDSE, SoilGrids e meteo.
+API principali (Django, `https://api.verdimetria.cais.uno`):
 
-L'API edge espone `GET /api/health` e `POST /api/analyze`. Le credenziali CDSE e
-DeepSeek sono secret cifrati Cloudflare e non vengono inviate al browser.
+- `POST /api/v1/auth/register/`, `POST /api/v1/auth/token/` - account e JWT;
+- `GET|POST /api/v1/fields/` - campi tenant-scoped (max 3 per account, anti-abuso);
+- `POST /api/v1/fields/{id}/jobs/`, `GET /api/v1/jobs/{id}/` - analisi asincrona;
+- `GET /api/v1/jobs/{id}/report.pdf` - report agronomico A4 (owner-scoped, cache disco);
+- `GET /api/v1/demo/` - report dimostrativo pubblico (AllowAny).
 
 ## Il modulo WMS via Configuration Instance (verdimetria)
 
@@ -184,15 +186,50 @@ demo/run_synthetic_demo.py     - pipeline completa con dati sintetici
 tests/test_raster_stack.py     - test del motore core
 ```
 
-## Prossimi passi realistici
+## Produzione (VPS `pcc`) — v1.0, 2026-07-30
 
-1. Collegare il disegno mappa a `POST /api/v1/fields/` e correggere il conflitto
-  touch tra drawing e pan su mobile.
-2. Aggiungere `AnalysisJob` idempotente e worker Celery, riusando Catalog,
-  Process, Statistical e ISPRA gia' validati.
-3. Ottenere il confine di un campo reale autorizzato e chiudere la Fase 0 con
-  una validazione agronomica esplicita.
-4. Validare SoilGrids, Copernicus DEM e S.I.T.R.; mantenere ISPRA come contesto
-  1:100.000 e aggiungere analisi di laboratorio/ground truth per decisioni reali.
-5. Alimentare grafici e AI Insights solo da metriche backend con provenienza,
-  quality score e limiti dichiarati.
+Servizi systemd: `verdimetria.service` (gunicorn su `127.0.0.1:8001`, TLS via
+nginx+certbot su `api.verdimetria.cais.uno`) e `verdimetria-celery.service`
+(worker, concurrency 2, Redis db/1). PostgreSQL 16 + PostGIS 3.4 e Redis di
+sistema. Frontend: Cloudflare Worker statico (`V2/`, deploy con
+`npm run build && npx wrangler deploy`).
+
+Deploy backend:
+
+```bash
+rsync -az --exclude '__pycache__' backend src pcc:/opt/verdimetria/
+ssh pcc "cd /opt/verdimetria && .venv/bin/pip install -r requirements.txt \
+  && .venv/bin/python manage.py migrate \
+  && sudo systemctl restart verdimetria verdimetria-celery"
+```
+
+Variabili `.env` rilevanti in produzione:
+
+- `CDSE_CLIENT_ID` / `CDSE_CLIENT_SECRET` - OAuth Copernicus Data Space;
+- `DEEPSEEK_API_KEY` - interpretazione AI (fallback rule-based se assente);
+- `EMAIL_HOST=smtp-relay.brevo.com` + credenziali SMTP Brevo - email transazionali
+  (mittente verificato `info@cais.uno`, DKIM+DMARC attivi);
+- `TINITALY_CACHE_DIR=/opt/verdimetria/data/tinitaly` - cache lazy-tile DTM 10m;
+- `CLC_PLUS_RASTER_PATH=/opt/verdimetria/data/clc/clc-plus-2021-italy-10m.tif`;
+- `REPORT_CACHE_DIR` - cache PDF report (default `<BASE_DIR>/report-cache`);
+- `MAX_FIELDS_PER_ACCOUNT=3` - cap anti-abuso campi per account.
+
+Il campo demo pubblico è un `Field` con `is_demo=True` (flag solo via shell,
+non esposto in API) + almeno un job completato; dopo ogni deploy che cambia il
+contratto di analisi va rigenerato il job demo.
+
+## Stato v1.0 e prossimi passi
+
+La **v1.0** (tag git) chiude il prodotto osservativo da satellite: pipeline
+quantitativa NDVI/NDMI/variabilità/morfometria/land-cover, AI agronomo con
+evidenze, diario interventi, report PDF A4, demo pubblica, anti-abuso, email
+transazionali. Suite 111 test verdi.
+
+Prossimi passi reali:
+
+1. Validazione agronomica del report su campo reale (gate Fase 0 residuo) e
+   pilot Innovagri/Sicilia.
+2. Abbonamento stagionale (vendita manuale nel pilot, Stripe dopo validazione).
+3. **V2.0** (spec nel PRD EterCervo, sezione 15): integrazione risultati
+   analisi campioni di suolo (ground truth laboratorio) + AI Agronomo chat
+   integrata con contesto completo per campo.
