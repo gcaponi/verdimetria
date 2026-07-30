@@ -15,11 +15,13 @@ from django.utils import timezone
 from requests.exceptions import RequestException, Timeout
 
 from backend.fields.insights import generate_insights
-from backend.fields.models import AnalysisJob
+from backend.fields.models import AnalysisJob, Field
 from backend.fields.pipeline import (
     build_field_analysis,
+    compute_vigor_variability,
     parse_statistics,
     summarize_catalog,
+    summarize_ndmi,
     summarize_vegetation,
 )
 from src.domain import AnalysisArea
@@ -35,6 +37,21 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 CLC_PLUS_RASTER_ENV = "CLC_PLUS_RASTER_PATH"
+
+MAX_AI_INTERVENTIONS = 10
+
+
+def _serialize_interventions(field: Field) -> list[dict[str, Any]]:
+    """Diario interventi come contesto AI: piu' recenti prima, max 10 voci."""
+    return [
+        {
+            "date": intervention.date.isoformat(),
+            "kind": intervention.kind,
+            "label": intervention.get_kind_display(),
+            "notes": intervention.notes,
+        }
+        for intervention in field.interventions.all()[:MAX_AI_INTERVENTIONS]
+    ]
 
 
 def _compute_terrain(area: AnalysisArea, oauth: Any) -> dict[str, Any]:
@@ -126,7 +143,12 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
         "endDate": params["end_date"],
         "catalog": catalog,
         "vegetation": vegetation,
+        "ndmi": summarize_ndmi(points),
+        "variability": compute_vigor_variability(points),
+        "terrain": terrain,
+        "landCover": land_cover,
         "crop": job.field.crop,
+        "interventions": _serialize_interventions(field),
     })
 
     return build_field_analysis(

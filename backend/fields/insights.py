@@ -1,7 +1,10 @@
-"""Interpretazione AI delle metriche NDVI (port della logica del Worker V2).
+"""Interpretazione AI delle metriche di campo (port della logica del Worker V2).
 
-Se DeepSeek non e' configurato (DEEPSEEK_API_KEY assente) o risponde male,
-ritorna SEMPRE il fallback rule-based: mai eccezioni verso il chiamante.
+Il prompt modella un ingegnere agronomo prudente: diagnosi dello stato del
+campo, possibili cause solo come ipotesi da verificare sul campo, azioni
+pratiche prioritarie e cosa monitorare. Se DeepSeek non e' configurato
+(DEEPSEEK_API_KEY assente) o risponde male, ritorna SEMPRE il fallback
+rule-based costruito sugli stessi dati: mai eccezioni verso il chiamante.
 """
 
 from __future__ import annotations
@@ -19,14 +22,30 @@ DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
 AI_TIMEOUT_SECONDS = 25
 
+MAX_AI_INSIGHTS = 6
+
 SYSTEM_PROMPT = (
-    "Sei un assistente di interpretazione agronomica prudente. Usa solo i dati "
-    "forniti, senza inventare unita', pendenze, cause o valori. Non diagnosticare "
-    "carenze NPK o malattie e non dare prescrizioni. Restituisci esattamente JSON "
-    "con summary (massimo 220 caratteri) e 3 insights. Ogni insight deve avere tone "
-    "(solo alert, warn, ok o info), title (massimo 60 caratteri), text (massimo 240 "
-    "caratteri) ed evidence (massimo 160 caratteri). Scrivi in italiano e suggerisci "
-    "solo verifiche sul campo."
+    "Sei un ingegnere agronomo che interpreta i dati satellitari Sentinel-2 di "
+    "un campo agricolo. Scrivi in italiano una valutazione agronomica prudente "
+    "usando SOLO i dati forniti: non inventare valori, unita', meteo o cause. "
+    "Vincoli non negoziabili: non diagnosticare mai malattie, patogeni o carenze "
+    "N-P-K specifiche; ogni possibile causa va presentata come ipotesi da "
+    "verificare sul campo; declaredCrop e reportedInterventions sono riferiti "
+    "dall'utente e non verificati: usali solo come contesto; ogni insight deve "
+    "citare in evidence i valori numerici che lo sostengono. "
+    "Restituisci esattamente JSON con: summary (2-3 frasi, max 400 caratteri) "
+    "che collega vegetazione (NDVI), umidita' (NDMI), stagione e coltura "
+    "dichiarata; e insights (4-6 elementi). Ogni insight ha: tone (solo alert, "
+    "warn, ok o info); title (max 80 caratteri) che inizia con 'Diagnosi:', "
+    "'Da verificare:', 'Azione consigliata:' o 'Monitoraggio:'; text (max 400 "
+    "caratteri); evidence (max 200 caratteri) con i numeri rilevanti. "
+    "Gli insights devono coprire: le possibili cause del pattern osservato "
+    "(collega trend NDVI, NDMI, variabilita' del campo, pendenza/esposizione, "
+    "copertura del suolo, coltura dichiarata e interventi registrati) come "
+    "ipotesi da verificare; azioni pratiche prioritarie per l'agricoltore "
+    "(sopralluogo mirato nelle zone deboli, controllo dell'irrigazione, "
+    "campionamento del suolo dove indicato); cosa monitorare nelle prossime "
+    "settimane."
 )
 
 FALLBACK_SUMMARY = (
@@ -58,78 +77,196 @@ def deepseek_url() -> str:
     return f"{base.rstrip('/')}/chat/completions"
 
 
-def rule_based_insights(catalog: dict[str, Any], vegetation: dict[str, Any]) -> list[dict[str, Any]]:
+def rule_based_insights(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fallback rule-based: diagnosi agronomica prudente dagli stessi dati."""
+    catalog = metrics["catalog"]
+    vegetation = metrics["vegetation"]
+    ndmi = metrics.get("ndmi") or {}
+    variability = metrics.get("variability") or {}
+    terrain = metrics.get("terrain") or {}
+    interventions = metrics.get("interventions") or []
+    crop = str(metrics.get("crop") or "").strip()
+
     current = vegetation.get("current") or 0
-    if current >= 0.5:
-        current_tone = "ok"
-        current_text = "L'ultimo NDVI medio e' compatibile con copertura vegetale consistente."
-    elif current >= 0.3:
-        current_tone = "info"
-        current_text = (
-            "L'ultimo NDVI medio indica copertura intermedia o una fase di transizione."
-        )
-    else:
-        current_tone = "warn"
-        current_text = (
-            "L'ultimo NDVI medio e' basso: verificare fase colturale, "
-            "suolo esposto e condizioni locali."
-        )
-
-    scene_count = catalog.get("sceneCount", 0)
     trend = vegetation.get("trend")
-    if trend is None:
-        trend_tone = "info"
-        trend_text = "Non ci sono ancora abbastanza intervalli per confrontare due finestre recenti."
-        trend_evidence = "Trend non calcolabile."
-    elif trend < -0.08:
-        trend_tone = "alert"
-        trend_text = (
-            "La media recente e' scesa rispetto alla finestra precedente: "
-            "pianificare un controllo visivo delle zone interessate."
-        )
-        trend_evidence = f"Delta NDVI tra finestre: {trend}."
-    elif trend > 0.08:
-        trend_tone = "info"
-        trend_text = (
-            "La media recente e' aumentata; confrontare il segnale con ciclo "
-            "colturale e interventi registrati."
-        )
-        trend_evidence = f"Delta NDVI tra finestre: +{trend}."
-    else:
-        trend_tone = "info"
-        trend_text = "La media recente e' sostanzialmente stabile rispetto alla finestra precedente."
-        trend_evidence = f"Delta NDVI tra finestre: {trend}."
+    ndmi_current = ndmi.get("current")
+    ndmi_trend = ndmi.get("trend")
+    weak_share = variability.get("weak")
+    scene_count = catalog.get("sceneCount", 0)
 
-    return [
+    if current >= 0.5:
+        diagnosis_tone = "ok"
+        diagnosis_state = "copertura vegetale consistente"
+    elif current >= 0.3:
+        diagnosis_tone = "info"
+        diagnosis_state = "copertura intermedia o fase di transizione"
+    else:
+        diagnosis_tone = "warn"
+        diagnosis_state = "copertura bassa (suolo esposto o inizio/fine ciclo)"
+    if trend is None:
+        trend_clause = "senza abbastanza intervalli per confrontare due finestre recenti"
+    elif trend < -0.08:
+        trend_clause = f"in calo rispetto alla finestra precedente (delta {trend})"
+    elif trend > 0.08:
+        trend_clause = f"in aumento rispetto alla finestra precedente (delta +{trend})"
+    else:
+        trend_clause = f"sostanzialmente stabile (delta {trend})"
+    crop_clause = (
+        f" Contesto: {crop} (coltura dichiarata dall'utente, non verificata)."
+        if crop
+        else ""
+    )
+
+    insights: list[dict[str, Any]] = [
         {
-            "tone": "ok" if scene_count >= 4 else "warn",
-            "title": "Copertura osservativa",
+            "tone": diagnosis_tone,
+            "title": "Diagnosi: stato della vegetazione",
             "text": (
-                "Il periodo contiene piu' acquisizioni utilizzabili per un confronto temporale."
-                if scene_count >= 4
-                else "Le scene utili sono poche: interpretare il trend con cautela."
+                f"L'ultimo NDVI medio indica {diagnosis_state}, {trend_clause}."
+                f"{crop_clause}"
             ),
-            "evidence": (
-                f"{scene_count} scene con cloud cover <= 30%; "
-                f"{vegetation.get('validObservations', 0)} intervalli NDVI validi."
-            ),
-        },
-        {
-            "tone": current_tone,
-            "title": "Stato dell'ultima osservazione",
-            "text": current_text,
             "evidence": (
                 f"NDVI medio ultimo intervallo {round(current, 3)}; "
-                f"media periodo {vegetation.get('average', 0)}."
+                f"media periodo {vegetation.get('average', 0)}; "
+                f"delta finestre {trend if trend is not None else 'n.d.'}."
             ),
-        },
-        {
-            "tone": trend_tone,
-            "title": "Variazione recente",
-            "text": trend_text,
-            "evidence": trend_evidence,
-        },
+        }
     ]
+
+    hypotheses: list[dict[str, Any]] = []
+    if trend is not None and trend < -0.08:
+        if ndmi_trend is not None and ndmi_trend < 0:
+            hypotheses.append({
+                "tone": "alert",
+                "title": "Da verificare: possibile stress idrico",
+                "text": (
+                    "NDVI e umidita' (NDMI) in calo insieme sono compatibili con "
+                    "stress idrico, ma anche con avanzamento del ciclo o "
+                    "interventi recenti: ipotesi da verificare sul campo."
+                ),
+                "evidence": (
+                    f"Delta NDVI {trend}; delta NDMI {ndmi_trend}; "
+                    f"NDMI ultimo {ndmi_current}."
+                ),
+            })
+        else:
+            hypotheses.append({
+                "tone": "alert",
+                "title": "Da verificare: calo recente del vigore",
+                "text": (
+                    "La media recente e' scesa rispetto alla finestra precedente: "
+                    "le possibili cause (idriche, colturali, sanitarie) sono solo "
+                    "ipotesi da verificare con un controllo visivo delle zone "
+                    "interessate."
+                ),
+                "evidence": (
+                    f"Delta NDVI tra finestre: {trend}; delta NDMI "
+                    f"{ndmi_trend if ndmi_trend is not None else 'n.d.'}."
+                ),
+            })
+    if weak_share is not None and weak_share >= 20:
+        hypotheses.append({
+            "tone": "warn",
+            "title": "Da verificare: zone a basso vigore estese",
+            "text": (
+                f"Circa il {weak_share}% del campo risulta a vigore debole: "
+                "possibili cause locali (compattamento, ristagno, emergenza "
+                "irregolare) da verificare con un sopralluogo mirato."
+            ),
+            "evidence": (
+                f"Classe debole (NDVI < 0.3): {weak_share}% dei pixel validi il "
+                f"{variability.get('date')} (soglie convenzionali MVP)."
+            ),
+        })
+    slope = terrain.get("slope") or {}
+    slope_mean = slope.get("mean")
+    if slope_mean is not None and slope_mean >= 8:
+        hypotheses.append({
+            "tone": "info",
+            "title": "Da verificare: pendenza e deflusso",
+            "text": (
+                "La pendenza media non e' trascurabile: nelle zone in pendenza "
+                "verificare deflusso e disponibilita' idrica differenziata "
+                "rispetto alle zone piane."
+            ),
+            "evidence": (
+                f"Pendenza media {slope_mean} gradi (max {slope.get('max')}); "
+                f"esposizione dominante {terrain.get('aspectDominant') or 'n.d.'}."
+            ),
+        })
+    insights.extend(hypotheses[:2])
+
+    actions: list[dict[str, Any]] = []
+    if weak_share is not None and weak_share >= 20:
+        actions.append({
+            "tone": "warn",
+            "title": "Azione consigliata: sopralluogo mirato",
+            "text": (
+                "Sopralluogo nelle zone a vigore debole per verificare le "
+                "possibili cause; se il pattern persiste, valutare un "
+                "campionamento del suolo da inviare a laboratorio."
+            ),
+            "evidence": (
+                f"Classe debole {weak_share}% dei pixel validi il "
+                f"{variability.get('date')}."
+            ),
+        })
+    if (ndmi_current is not None and ndmi_current < 0.2) or (
+        ndmi_trend is not None and ndmi_trend < -0.05
+    ):
+        actions.append({
+            "tone": "warn",
+            "title": "Azione consigliata: controllo irrigazione",
+            "text": (
+                "L'umidita' vegetale risulta bassa o in calo: verificare il "
+                "funzionamento dell'impianto e l'uniformita' di distribuzione."
+            ),
+            "evidence": f"NDMI ultimo {ndmi_current}; delta NDMI {ndmi_trend}.",
+        })
+    if not actions:
+        actions.append({
+            "tone": "info",
+            "title": "Azione consigliata: verifica di routine",
+            "text": (
+                "Nessuna anomalia evidente nei dati: confermare il quadro "
+                "satellitare con un sopralluogo di routine prima di qualunque "
+                "intervento."
+            ),
+            "evidence": (
+                f"NDVI medio ultimo intervallo {round(current, 3)}; "
+                f"{vegetation.get('validObservations', 0)} intervalli NDVI validi."
+            ),
+        })
+    insights.extend(actions)
+
+    if scene_count >= 4:
+        monitoring_tone = "info"
+        monitoring_text = "Confrontare le prossime acquisizioni con lo stato attuale"
+    else:
+        monitoring_tone = "warn"
+        monitoring_text = (
+            "Le scene utili sono poche: interpretare il trend con cautela e "
+            "attendere nuove acquisizioni"
+        )
+    if interventions:
+        latest = interventions[0]
+        monitoring_text += (
+            f"; incrociare il segnale con l'ultimo intervento riportato "
+            f"({latest.get('label') or latest.get('kind')} del "
+            f"{latest.get('date')}, riferito dall'utente)"
+        )
+    monitoring_text += "."
+    insights.append({
+        "tone": monitoring_tone,
+        "title": "Monitoraggio: prossime settimane",
+        "text": monitoring_text,
+        "evidence": (
+            f"{scene_count} scene utili nel periodo; "
+            f"{vegetation.get('validObservations', 0)} intervalli NDVI validi."
+        ),
+    })
+
+    return insights[:MAX_AI_INSIGHTS]
 
 
 def _normalize_tone(value: Any) -> str | None:
@@ -181,7 +318,7 @@ def parse_ai_content(content: str) -> dict[str, Any] | None:
         })
     if not insights:
         return None
-    return {"summary": value["summary"][:500], "insights": insights[:5]}
+    return {"summary": value["summary"][:500], "insights": insights[:MAX_AI_INSIGHTS]}
 
 
 def _extract_ai_content(payload: Any) -> str | None:
@@ -209,17 +346,9 @@ def _fallback_result(insights: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Genera il blocco `ai` del contratto FieldAnalysis. Mai eccezioni."""
-    fallback = _fallback_result(
-        rule_based_insights(metrics["catalog"], metrics["vegetation"])
-    )
-    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    if not api_key:
-        return fallback
-
-    model = deepseek_model()
-    model_input = {
+def _build_model_input(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Contesto completo per il prompt: metriche derivate + diario interventi."""
+    model_input: dict[str, Any] = {
         "areaHectares": round(metrics["areaHectares"], 2),
         "period": {"from": metrics["startDate"], "to": metrics["endDate"]},
         "catalog": {
@@ -252,6 +381,80 @@ def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
         model_input["declaredCrop"] = (
             f"{crop} (coltura dichiarata dall'utente, opzionale e non verificata)"
         )
+    ndmi = metrics.get("ndmi")
+    if ndmi:
+        model_input["ndmi"] = {
+            "current": ndmi.get("current"),
+            "average": ndmi.get("average"),
+            "min": ndmi.get("min"),
+            "max": ndmi.get("max"),
+            "trend": ndmi.get("trend"),
+            "validObservations": ndmi.get("validObservations"),
+            "observations": [
+                {"date": point["date"], "mean": point["mean"]}
+                for point in ndmi.get("points", [])
+            ],
+        }
+    variability = metrics.get("variability")
+    if variability:
+        model_input["variability"] = {
+            "date": variability.get("date"),
+            "weak": variability.get("weak"),
+            "intermediate": variability.get("intermediate"),
+            "vigorous": variability.get("vigorous"),
+            "method": variability.get("method"),
+            "note": (
+                "Classi di vigore da soglie NDVI convenzionali MVP, "
+                "non verita' agronomica."
+            ),
+        }
+    terrain = metrics.get("terrain")
+    if terrain:
+        model_input["terrain"] = {
+            "elevation": terrain.get("elevation"),
+            "slope": terrain.get("slope"),
+            "aspectDominant": terrain.get("aspectDominant"),
+        }
+    land_cover = metrics.get("landCover")
+    if land_cover:
+        model_input["landCover"] = {
+            "year": land_cover.get("year"),
+            "classes": [
+                {
+                    "label": item.get("label"),
+                    "share": item.get("share"),
+                    "hectares": item.get("hectares"),
+                }
+                for item in land_cover.get("classes", [])
+            ],
+            "note": (
+                "CLC+ Backbone 2021: fotografia del 2021, non necessariamente "
+                "aggiornata al periodo in analisi."
+            ),
+        }
+    interventions = metrics.get("interventions") or []
+    if interventions:
+        # User-reported diary entries, most recent first: unverified context.
+        model_input["reportedInterventions"] = [
+            {
+                "date": item.get("date"),
+                "label": item.get("label") or item.get("kind"),
+                "notes": item.get("notes") or "",
+            }
+            for item in interventions
+        ]
+    return model_input
+
+
+def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Genera il blocco `ai` del contratto FieldAnalysis. Mai eccezioni."""
+    fallback = _fallback_result(rule_based_insights(metrics))
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        return fallback
+
+    model = deepseek_model()
+    model_input = _build_model_input(metrics)
     try:
         response = requests.post(
             deepseek_url(),
@@ -268,7 +471,7 @@ def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
                 ],
                 "response_format": {"type": "json_object"},
                 "temperature": 0.2,
-                "max_tokens": 1200,
+                "max_tokens": 1600,
             },
             timeout=AI_TIMEOUT_SECONDS,
         )
