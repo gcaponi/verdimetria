@@ -1,5 +1,6 @@
 from typing import Any, cast
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from rest_framework import mixins, status, viewsets
@@ -30,6 +31,22 @@ class FieldViewSet(viewsets.ModelViewSet):
         if self.request.user.is_anonymous:
             return Field.objects.none()
         return Field.objects.filter(owner=self.request.user).prefetch_related("boundaries")
+
+    def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        owner = cast(User, request.user)
+        # Demo fields are platform-managed and must not consume the user quota.
+        owned_count = Field.objects.filter(owner=owner, is_demo=False).count()
+        if owned_count >= settings.MAX_FIELDS_PER_ACCOUNT:
+            return Response(
+                {
+                    "detail": (
+                        f"Limite massimo di {settings.MAX_FIELDS_PER_ACCOUNT} "
+                        "campi per account raggiunto"
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().create(request, *args, **kwargs)
 
     @action(detail=True, methods=("post",), url_path="boundaries")
     def create_boundary(self, request: Request, **kwargs: Any) -> Response:
