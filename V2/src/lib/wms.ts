@@ -232,6 +232,107 @@ function directChildText(node: Element, tagName: string): string {
   return child?.textContent?.trim() ?? "";
 }
 
+export const SCENE_WINDOW_DAYS = 90;
+export const SCENE_MAX_CLOUD_COVER = 30;
+export const SCENE_MAX_ATTEMPTS = 3;
+export const SCENE_MIN_COVERAGE = 0.85;
+
+/** Inclusive date range (YYYY-MM-DD) for the WMS TIME parameter. */
+export interface SceneTimeWindow {
+  from: string;
+  to: string;
+}
+
+/** Rolling window [today - SCENE_WINDOW_DAYS, today] used by default for CDSE GetMap requests. */
+export function currentSceneWindow(now: Date = new Date()): SceneTimeWindow {
+  const to = now.toISOString().slice(0, 10);
+  return { from: shiftISODate(to, -SCENE_WINDOW_DAYS), to };
+}
+
+/**
+ * Window that forces the WMS to pick the acquisition BEFORE `sceneDate`:
+ * same start, end = day before the current scene. Returns null when the range
+ * would be empty (no older acquisition to try inside the rolling window).
+ */
+export function previousSceneWindow(
+  timeRange: SceneTimeWindow,
+  sceneDate: string
+): SceneTimeWindow | null {
+  // Clamp to the range end so it always shrinks, even in the rare case the
+  // catalogue and the WMS disagree about the most recent scene.
+  const anchor = sceneDate <= timeRange.to ? sceneDate : timeRange.to;
+  const to = shiftISODate(anchor, -1);
+  if (to < timeRange.from) return null;
+  return { from: timeRange.from, to };
+}
+
+/** One evaluated WMS image: which scene it shows (if known) and how much of the polygon it covers. */
+export interface SceneAttempt {
+  sceneDate: string | null;
+  coverage: number; // 0..1, fraction of non-transparent pixels inside the field polygon
+}
+
+/** Attempt with the highest polygon coverage (first max wins); null when nothing was measured. */
+export function pickBestAttempt<T extends SceneAttempt>(attempts: readonly T[]): T | null {
+  let best: T | null = null;
+  for (const attempt of attempts) {
+    if (!best || attempt.coverage > best.coverage) best = attempt;
+  }
+  return best;
+}
+
+function shiftISODate(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+const CDSE_CATALOG_URL = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products";
+
+export interface CdseScene {
+  /** Acquisition day (YYYY-MM-DD) of the most recent scene matching the query. */
+  date: string;
+}
+
+/**
+ * Most recent Sentinel-2 L2A scene in the CDSE catalogue intersecting the bbox,
+ * filtered by the same rolling window and cloud cover (MAXCC) used by the WMS
+ * GetMap. The WMS picks per tile while this queries per bbox, so the date is an
+ * indication: it may rarely differ from the scene actually rendered.
+ */
+export async function fetchLatestCdseScene(
+  bounds: { west: number; south: number; east: number; north: number },
+  timeRange: SceneTimeWindow,
+  signal?: AbortSignal
+): Promise<CdseScene | null> {
+  const footprint =
+    "POLYGON((" +
+    `${bounds.west} ${bounds.south},${bounds.east} ${bounds.south},` +
+    `${bounds.east} ${bounds.north},${bounds.west} ${bounds.north},` +
+    `${bounds.west} ${bounds.south}))`;
+  const filter = [
+    "Collection/Name eq 'SENTINEL-2'",
+    "contains(Name,'MSIL2A')",
+    `ContentDate/Start ge ${timeRange.from}T00:00:00.000Z`,
+    `ContentDate/Start le ${timeRange.to}T23:59:59.999Z`,
+    `OData.CSC.Intersects(area=geography'SRID=4326;${footprint}')`,
+    `Attributes/OData.CSC.DoubleAttribute/any(att:att/Name eq 'cloudCover' and att/OData.CSC.DoubleAttribute/Value le ${SCENE_MAX_CLOUD_COVER})`,
+  ].join(" and ");
+  const params = new URLSearchParams({
+    $filter: filter,
+    $orderby: "ContentDate/Start desc",
+    $top: "1",
+    $select: "Name,ContentDate",
+  });
+  const response = await fetch(`${CDSE_CATALOG_URL}?${params.toString()}`, { signal });
+  if (!response.ok) throw new Error(`Catalogo CDSE non disponibile (${response.status})`);
+  const data = (await response.json()) as {
+    value?: Array<{ ContentDate?: { Start?: string } }>;
+  };
+  const start = data.value?.[0]?.ContentDate?.Start;
+  return start ? { date: start.slice(0, 10) } : null;
+}
+
 export function areaBounds(area: MapArea): {
   west: number;
   south: number;
@@ -248,7 +349,7 @@ export function areaBounds(area: MapArea): {
   };
 }
 
-export function buildWmsUrl(layer: WmsLayer, area: MapArea): string {
+export function buildWmsUrl(layer: WmsLayer, area: MapArea, timeWindow?: SceneTimeWindow): string {
   const bounds = areaBounds(area);
   if (layer.provider === "soilgrids" && layer.soilProperty && layer.remoteLayer) {
     const params = new URLSearchParams({
@@ -267,10 +368,7 @@ export function buildWmsUrl(layer: WmsLayer, area: MapArea): string {
     return `https://maps.isric.org/mapserv/${layer.soilProperty}?${params.toString()}`;
   }
 
-  const endDate = new Date();
-  const startDate = new Date(endDate);
-  startDate.setUTCDate(startDate.getUTCDate() - 90);
-  const datePart = (date: Date) => date.toISOString().slice(0, 10);
+  const timeRange = timeWindow ?? currentSceneWindow();
   const params = new URLSearchParams({
     SERVICE: "WMS",
     VERSION: "1.1.1",
@@ -282,8 +380,8 @@ export function buildWmsUrl(layer: WmsLayer, area: MapArea): string {
     HEIGHT: "1024",
     FORMAT: "image/png",
     TRANSPARENT: "true",
-    TIME: `${datePart(startDate)}/${datePart(endDate)}`,
-    MAXCC: "30",
+    TIME: `${timeRange.from}/${timeRange.to}`,
+    MAXCC: String(SCENE_MAX_CLOUD_COVER),
   });
   return `${WMS_BASE_URL}?${params.toString()}`;
 }

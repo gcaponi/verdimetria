@@ -3,8 +3,19 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "@geoman-io/leaflet-geoman-free";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
-import { areaBounds, buildWmsUrl } from "@/lib/wms";
-import type { WmsLayer } from "@/lib/wms";
+import {
+  areaBounds,
+  buildWmsUrl,
+  currentSceneWindow,
+  fetchLatestCdseScene,
+  pickBestAttempt,
+  previousSceneWindow,
+  SCENE_MAX_ATTEMPTS,
+  SCENE_MAX_CLOUD_COVER,
+  SCENE_MIN_COVERAGE,
+  SCENE_WINDOW_DAYS,
+} from "@/lib/wms";
+import type { SceneAttempt, WmsLayer } from "@/lib/wms";
 import type { MapArea } from "@/types";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Check, Hand, Hexagon, MapPin, Move, RectangleHorizontal, Search, X } from "lucide-react";
@@ -42,10 +53,12 @@ export default function MapPanelNational({
     return window.innerWidth >= 768;
   });
   const dragEnabledRef = useRef(dragEnabled);
-  const [overlayState, setOverlayState] = useState<{ key: string | null; status: LayerStatus }>({
-    key: null,
-    status: "idle",
-  });
+  const [overlayState, setOverlayState] = useState<{
+    key: string | null;
+    status: LayerStatus;
+    sceneDate?: string; // acquisition day (YYYY-MM-DD) reported by the CDSE catalogue
+    partialCoverage?: number; // 0..1, set when no recent scene covers the polygon enough
+  }>({ key: null, status: "idle" });
 
   const modeRef = useRef<DrawMode>("none");
   const selectArea = useEffectEvent(onSelectArea);
@@ -65,11 +78,14 @@ export default function MapPanelNational({
   const overlayKey = selectedArea && activeLayer.provider !== "none" && activeLayer.provider !== "pending"
     ? `${selectedArea.id}:${activeLayer.id}`
     : null;
-  const layerStatus = overlayState.key === overlayKey
-    ? overlayState.status
+  const currentOverlayState = overlayState.key === overlayKey ? overlayState : null;
+  const layerStatus = currentOverlayState
+    ? currentOverlayState.status
     : overlayKey
       ? "loading"
       : "idle";
+  const sceneDate = currentOverlayState?.sceneDate;
+  const partialCoverage = currentOverlayState?.partialCoverage;
 
   const setMode = (mode: DrawMode) => {
     const map = mapRef.current;
@@ -249,16 +265,126 @@ export default function MapPanelNational({
       [bounds.south, bounds.west],
       [bounds.north, bounds.east],
     ];
-    const overlay = L.imageOverlay(buildWmsUrl(activeLayer, selectedArea), imageBounds, {
-      opacity: 0.82,
-      interactive: false,
-    });
-    overlay.on("load", () => setOverlayState({ key: overlayKey, status: "ready" }));
-    overlay.on("error", () => setOverlayState({ key: overlayKey, status: "error" }));
-    overlay.addTo(map);
-    overlayRef.current = overlay;
-    const element = overlay.getElement();
-    if (element) element.style.clipPath = polygonClipPath(selectedArea);
+    const clipPath = polygonClipPath(selectedArea);
+
+    if (activeLayer.provider !== "cdse") {
+      // SoilGrids: single-shot overlay, no acquisition date or coverage handling.
+      const overlay = L.imageOverlay(buildWmsUrl(activeLayer, selectedArea), imageBounds, {
+        opacity: 0.82,
+        interactive: false,
+      });
+      overlay.on("load", () => setOverlayState({ key: overlayKey, status: "ready" }));
+      overlay.on("error", () => setOverlayState({ key: overlayKey, status: "error" }));
+      overlay.addTo(map);
+      overlayRef.current = overlay;
+      const element = overlay.getElement();
+      if (element) element.style.clipPath = clipPath;
+      return;
+    }
+
+    // CDSE layers: one GetMap returns the most recent scene in the TIME window,
+    // whose swath may cover the field only partially. Resolve the scene date
+    // from the CDSE catalogue, measure the coverage inside the polygon, and step
+    // back to older acquisitions (up to SCENE_MAX_ATTEMPTS) while coverage is poor.
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const loadOverlay = (url: string) =>
+      new Promise<L.ImageOverlay>((resolve, reject) => {
+        const overlay = L.imageOverlay(url, imageBounds, {
+          opacity: 0.82,
+          interactive: false,
+          // Sentinel Hub answers GetMap with Access-Control-Allow-Origin, so a
+          // CORS-enabled <img> can be drawn to canvas without tainting it.
+          crossOrigin: true,
+        });
+        overlay.on("load", () => resolve(overlay));
+        overlay.on("error", () => {
+          // A failed GetMap renders nothing: drop the broken element so it can
+          // never leak on the map (skip when the map itself is already gone).
+          if (mapRef.current === map) map.removeLayer(overlay);
+          reject(new Error("GetMap CDSE non disponibile"));
+        });
+        overlay.addTo(map);
+      });
+
+    const run = async () => {
+      let timeWindow = currentSceneWindow();
+      let displayed: L.ImageOverlay | null = null;
+      const attempts: Array<SceneAttempt & { overlay: L.ImageOverlay }> = [];
+      try {
+        for (let attemptIndex = 0; attemptIndex < SCENE_MAX_ATTEMPTS; attemptIndex += 1) {
+          // The catalogue query runs in parallel with the image load; a failure
+          // only means "no scene date", it never breaks the overlay.
+          const scenePromise = fetchLatestCdseScene(bounds, timeWindow, controller.signal).catch(
+            () => null
+          );
+          let overlay: L.ImageOverlay;
+          try {
+            overlay = await loadOverlay(buildWmsUrl(activeLayer, selectedArea, timeWindow));
+          } catch (error) {
+            // First attempt failing = "layer not available" (as before); a retry
+            // failing keeps the best image already on the map.
+            if (attemptIndex === 0) throw error;
+            break;
+          }
+          if (cancelled) {
+            if (mapRef.current === map) map.removeLayer(overlay);
+            return;
+          }
+          if (displayed) map.removeLayer(displayed);
+          displayed = overlay;
+          overlayRef.current = overlay;
+          const element = overlay.getElement();
+          if (element) element.style.clipPath = clipPath;
+          setOverlayState({ key: overlayKey, status: "ready" });
+
+          const scene = await scenePromise;
+          if (cancelled) return;
+          if (scene) {
+            setOverlayState((current) =>
+              current?.key === overlayKey ? { ...current, sceneDate: scene.date } : current
+            );
+          }
+
+          const coverage = measurePolygonCoverage(overlay, selectedArea);
+          if (coverage === null) break; // readback unavailable: keep single-request behaviour
+          attempts.push({ sceneDate: scene?.date ?? null, coverage, overlay });
+          if (coverage >= SCENE_MIN_COVERAGE) return; // the displayed scene covers the field
+          if (!scene) break; // without the scene date there is no way to step back
+          const nextWindow = previousSceneWindow(timeWindow, scene.date);
+          if (!nextWindow) break; // no older acquisition inside the rolling window
+          timeWindow = nextWindow;
+        }
+
+        if (cancelled || attempts.length === 0) return;
+        // Every measured attempt stayed below SCENE_MIN_COVERAGE (a good attempt
+        // would have returned inside the loop): keep the best one on the map.
+        const best = pickBestAttempt(attempts);
+        if (!best) return;
+        if (displayed !== best.overlay) {
+          if (displayed) map.removeLayer(displayed);
+          best.overlay.addTo(map); // same <img> element, already loaded: no new request
+          displayed = best.overlay;
+          overlayRef.current = best.overlay;
+        }
+        // Flag the partial coverage only when the catalogue guided the flow;
+        // otherwise the strip stays exactly as it has always been.
+        if (!attempts[0].sceneDate) return;
+        setOverlayState((current) =>
+          current?.key === overlayKey
+            ? { ...current, sceneDate: best.sceneDate ?? undefined, partialCoverage: best.coverage }
+            : current
+        );
+      } catch {
+        if (!cancelled) setOverlayState({ key: overlayKey, status: "error" });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [activeLayer, overlayKey, selectedArea]);
 
   useEffect(() => {
@@ -309,6 +435,18 @@ export default function MapPanelNational({
             <div className={layerStatusColor(layerStatus)}>
               {layerStatusLabel(layerStatus, activeLayer.provider)}
             </div>
+            {sceneDate && (
+              <div className="shrink-0 text-slate-400">
+                Scena del {formatSceneDate(sceneDate)} (indicativa) · ultimi {SCENE_WINDOW_DAYS} gg,
+                nuvole ≤ {SCENE_MAX_CLOUD_COVER}%
+              </div>
+            )}
+            {partialCoverage != null && (
+              <div className="shrink-0 text-amber-300/90">
+                Copertura scena parziale ({Math.round(partialCoverage * 100)}%) — nessuna scena
+                completa recente
+              </div>
+            )}
           </div>
           <LayerLegend layer={activeLayer} />
         </div>
@@ -406,6 +544,68 @@ function polygonClipPath(area: MapArea): string {
     return `${x.toFixed(4)}% ${y.toFixed(4)}%`;
   });
   return `polygon(${points.join(", ")})`;
+}
+
+// "2026-07-27" -> "27/07/2026" (locale-independent)
+function formatSceneDate(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+/**
+ * Fraction (0..1) of non-transparent pixels of the WMS image inside the field
+ * polygon. The image spans the field bbox; the polygon is rasterized as a mask
+ * with the same lon/lat -> pixel mapping used by polygonClipPath. Returns null
+ * when the readback is not possible (canvas tainted because the server did not
+ * send CORS headers, or canvas unsupported): callers then skip the coverage
+ * logic silently and keep the single-request behaviour.
+ */
+function measurePolygonCoverage(overlay: L.ImageOverlay, area: MapArea): number | null {
+  const element = overlay.getElement();
+  if (!(element instanceof HTMLImageElement)) return null;
+  const width = element.naturalWidth;
+  const height = element.naturalHeight;
+  if (width === 0 || height === 0) return null;
+  try {
+    const imageCanvas = document.createElement("canvas");
+    imageCanvas.width = width;
+    imageCanvas.height = height;
+    const imageContext = imageCanvas.getContext("2d", { willReadFrequently: true });
+    if (!imageContext) return null;
+    imageContext.drawImage(element, 0, 0);
+
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = width;
+    maskCanvas.height = height;
+    const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true });
+    if (!maskContext) return null;
+    const bounds = areaBounds(area);
+    maskContext.fillStyle = "#000";
+    maskContext.beginPath();
+    area.poly.forEach(([longitude, latitude], index) => {
+      const x = ((longitude - bounds.west) / (bounds.east - bounds.west)) * width;
+      const y = ((bounds.north - latitude) / (bounds.north - bounds.south)) * height;
+      if (index === 0) maskContext.moveTo(x, y);
+      else maskContext.lineTo(x, y);
+    });
+    maskContext.closePath();
+    maskContext.fill();
+
+    // getImageData throws a SecurityError if the canvas is tainted.
+    const imageData = imageContext.getImageData(0, 0, width, height).data;
+    const maskData = maskContext.getImageData(0, 0, width, height).data;
+    let inside = 0;
+    let covered = 0;
+    for (let offset = 0; offset < imageData.length; offset += 4) {
+      if (maskData[offset + 3] < 128) continue; // outside the polygon (antialiased edge ~50%)
+      inside += 1;
+      // WMS TRANSPARENT=true gives binary alpha: 0 = no data (outside the scene swath)
+      if (imageData[offset + 3] > 0) covered += 1;
+    }
+    return inside === 0 ? null : covered / inside;
+  } catch {
+    return null;
+  }
 }
 
 function tempStyle(): L.PolylineOptions {
