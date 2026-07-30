@@ -126,6 +126,7 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
         "endDate": params["end_date"],
         "catalog": catalog,
         "vegetation": vegetation,
+        "crop": job.field.crop,
     })
 
     return build_field_analysis(

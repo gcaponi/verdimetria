@@ -12,6 +12,8 @@ class Field(models.Model):
         related_name="fields",
     )
     name = models.CharField(max_length=160)
+    # Optional user-declared crop: interpretation metadata only, never required.
+    crop = models.CharField(max_length=120, blank=True, default="")
     is_demo = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

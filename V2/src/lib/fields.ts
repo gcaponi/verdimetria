@@ -54,6 +54,7 @@ export async function createField(
   authorization: string,
   name: string,
   boundary: Position[],
+  crop = "",
 ): Promise<StoredField> {
   const firstPosition = boundary[0];
   const lastPosition = boundary.at(-1);
@@ -66,6 +67,7 @@ export async function createField(
     method: "POST",
     body: JSON.stringify({
       name,
+      crop,
       boundary: { type: "Polygon", coordinates: [coordinates] },
       boundary_source: "draw",
     }),

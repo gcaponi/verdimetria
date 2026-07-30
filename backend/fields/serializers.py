@@ -72,6 +72,7 @@ class FieldSerializer(serializers.ModelSerializer):
         fields = (
             "id",
             "name",
+            "crop",
             "boundary",
             "boundary_source",
             "latest_boundary",

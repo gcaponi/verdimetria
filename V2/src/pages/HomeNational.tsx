@@ -127,13 +127,13 @@ export default function HomeNational() {
     else setAuthOpen(true);
   };
 
-  const confirmCustomArea = async (name: string) => {
+  const confirmCustomArea = async (name: string, crop: string) => {
     if (!pendingBoundary) return;
     setFieldSaving(true);
     setFieldsError(null);
     try {
       const authorization = await getAuthHeader();
-      const storedField = await createField(authorization, name, pendingBoundary);
+      const storedField = await createField(authorization, name, pendingBoundary, crop);
       const area = storedFieldToMapArea(storedField);
       if (!area) throw new Error("Il backend non ha restituito un confine valido");
       fieldsRequestRef.current += 1;

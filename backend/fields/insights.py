@@ -246,6 +246,12 @@ def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
             ],
         },
     }
+    crop = str(metrics.get("crop") or "").strip()
+    if crop:
+        # User-declared, optional and unverified: context for interpretation only.
+        model_input["declaredCrop"] = (
+            f"{crop} (coltura dichiarata dall'utente, opzionale e non verificata)"
+        )
     try:
         response = requests.post(
             deepseek_url(),

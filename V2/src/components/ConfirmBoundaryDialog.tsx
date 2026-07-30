@@ -20,7 +20,7 @@ interface Props {
   pending: boolean;
   error: string | null;
   onCancel: () => void;
-  onConfirm: (name: string) => void;
+  onConfirm: (name: string, crop: string) => void;
 }
 
 export default function ConfirmBoundaryDialog({
@@ -34,11 +34,12 @@ export default function ConfirmBoundaryDialog({
   onConfirm,
 }: Props) {
   const [name, setName] = useState(suggestedName);
+  const [crop, setCrop] = useState("");
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedName = name.trim();
-    if (normalizedName) onConfirm(normalizedName);
+    if (normalizedName) onConfirm(normalizedName, crop.trim());
   };
 
   return (
@@ -75,6 +76,21 @@ export default function ConfirmBoundaryDialog({
               autoComplete="off"
               autoFocus
               required
+              disabled={pending}
+              className="border-slate-700 bg-slate-900 text-slate-100"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="field-crop" className="text-slate-300">
+              Coltura (opzionale)
+            </Label>
+            <Input
+              id="field-crop"
+              value={crop}
+              onChange={(event) => setCrop(event.target.value)}
+              maxLength={120}
+              autoComplete="off"
+              placeholder="es. Vigneto, Oliveto, Grano duro"
               disabled={pending}
               className="border-slate-700 bg-slate-900 text-slate-100"
             />
