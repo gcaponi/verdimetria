@@ -1,4 +1,4 @@
-"""Client per statistiche NDVI tramite Sentinel Hub Statistical API su CDSE."""
+"""Client for NDVI/NDMI statistics via the Sentinel Hub Statistical API on CDSE."""
 
 from __future__ import annotations
 
@@ -12,24 +12,35 @@ from src.ingestion.process_api import crs_uri, get_oauth_session
 
 STATISTICAL_URL = "https://sh.dataspace.copernicus.eu/statistics/v1"
 
-NDVI_STATISTICS_EVALSCRIPT = """
+# NDVI histogram requested for the vigor classes: bin edges stay aligned with
+# the MVP vigor thresholds (0.3 / 0.5), so every bin falls in a single class.
+NDVI_HISTOGRAM_BINS = 20
+NDVI_HISTOGRAM_LOW_EDGE = -1.0
+NDVI_HISTOGRAM_HIGH_EDGE = 1.0
+
+VEGETATION_STATISTICS_EVALSCRIPT = """
 //VERSION=3
 function setup() {
   return {
-    input: [{ bands: ["B04", "B08", "SCL", "dataMask"] }],
+    input: [{ bands: ["B04", "B08", "B11", "SCL", "dataMask"] }],
     output: [
       { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
-      { id: "dataMask", bands: 1 }
+      { id: "ndmi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: ["ndvi", "ndmi"] }
     ]
   };
 }
 function evaluatePixel(sample) {
   const invalidScl = [0, 1, 2, 3, 8, 9, 10, 11].includes(sample.SCL);
-  const denominator = sample.B08 + sample.B04;
-  const valid = sample.dataMask === 1 && !invalidScl && denominator !== 0;
+  const ndviDenominator = sample.B08 + sample.B04;
+  const ndmiDenominator = sample.B08 + sample.B11;
+  const masked = sample.dataMask === 1 && !invalidScl;
+  const ndviValid = masked && ndviDenominator !== 0;
+  const ndmiValid = masked && ndmiDenominator !== 0;
   return {
-    ndvi: [valid ? (sample.B08 - sample.B04) / denominator : 0],
-    dataMask: [valid ? 1 : 0]
+    ndvi: [ndviValid ? (sample.B08 - sample.B04) / ndviDenominator : 0],
+    ndmi: [ndmiValid ? (sample.B08 - sample.B11) / ndmiDenominator : 0],
+    dataMask: [ndviValid ? 1 : 0, ndmiValid ? 1 : 0]
   };
 }
 """.strip()
@@ -98,15 +109,25 @@ def build_statistical_request(
             "resx": resolution_m,
             "resy": resolution_m,
         },
-        "calculations": {
-            "ndvi": {
-                "statistics": {
-                    "default": {
-                        "percentiles": {"k": list(percentiles)},
-                    },
+        "calculations": _index_calculations(percentiles),
+    }
+
+
+def _index_calculations(percentiles: Sequence[float]) -> dict[str, Any]:
+    """Statistics for both indices; NDVI also carries the vigor-class histogram."""
+    statistics = {"default": {"percentiles": {"k": list(percentiles)}}}
+    return {
+        "ndvi": {
+            "statistics": statistics,
+            "histograms": {
+                "default": {
+                    "nBins": NDVI_HISTOGRAM_BINS,
+                    "lowEdge": NDVI_HISTOGRAM_LOW_EDGE,
+                    "highEdge": NDVI_HISTOGRAM_HIGH_EDGE,
                 },
             },
         },
+        "ndmi": {"statistics": statistics},
     }
 
 
@@ -118,9 +139,9 @@ def fetch_ndvi_statistics(
     oauth: Any | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Statistiche NDVI; `oauth` permette di riusare una sessione esistente."""
+    """NDVI+NDMI statistics from a single request; `oauth` reuses a session."""
     request_body = build_statistical_request(
-        NDVI_STATISTICS_EVALSCRIPT,
+        VEGETATION_STATISTICS_EVALSCRIPT,
         area,
         start_date,
         end_date,

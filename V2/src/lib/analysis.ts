@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from "@/lib/auth";
 import { FieldsApiError } from "@/lib/fields";
-import type { MapArea } from "@/types";
+import type { MapArea, NdmiBlock, VariabilityBlock } from "@/types";
 
 export type AnalysisStatus = "loading" | "ready" | "error";
 
@@ -52,6 +52,8 @@ export interface FieldAnalysis {
     validObservations: number;
     totalValidPixels: number;
   };
+  ndmi?: NdmiBlock | null;
+  variability?: VariabilityBlock | null;
   terrain: {
     elevation: { min: number; max: number; mean: number };
     slope: { mean: number; max: number };

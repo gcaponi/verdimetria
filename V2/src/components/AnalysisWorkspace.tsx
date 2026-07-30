@@ -193,6 +193,11 @@ function Overview({
       detail: "Statistical API · pixel validi",
     },
     {
+      label: "NDMI corrente",
+      value: analysis?.ndmi?.current?.toLocaleString("it-IT", { maximumFractionDigits: 3 }) ?? (status === "loading" ? "..." : "n/d"),
+      detail: "Umidità vegetazione · Statistical API",
+    },
+    {
       label: "Pendenza media",
       value: analysis ? `${analysis.terrain.slope.mean.toLocaleString("it-IT", { maximumFractionDigits: 1 })}°` : status === "loading" ? "..." : "n/d",
       detail: analysis ? `max ${analysis.terrain.slope.max.toLocaleString("it-IT", { maximumFractionDigits: 1 })}° · esposizione ${analysis.terrain.aspectDominant ?? "n/d"}` : "Copernicus DEM 30 m",
@@ -329,7 +334,12 @@ function VegetationAnalysis({
         onLayerChange={onLayerChange}
       />
       <AnalysisResult status={status} analysis={analysis} error={error} onRetry={onRetry}>
-        {(result) => <VegetationCharts analysis={result} />}
+        {(result) => (
+          <>
+            <VegetationCharts analysis={result} />
+            <VigorVariability analysis={result} />
+          </>
+        )}
       </AnalysisResult>
     </div>
   );
@@ -556,6 +566,61 @@ function StatusPanel({
   );
 }
 
+function VigorVariability({ analysis }: { analysis: FieldAnalysis }) {
+  const variability = analysis?.variability;
+  if (!variability) return null;
+  const { thresholds } = variability;
+  const classes = [
+    {
+      label: `Vigorosa (NDVI > ${formatThreshold(thresholds.vigorousMin)})`,
+      value: variability.vigorous,
+      bar: "bg-emerald-400/80",
+    },
+    {
+      label: `Intermedia (${formatThreshold(thresholds.weakMax)}–${formatThreshold(thresholds.vigorousMin)})`,
+      value: variability.intermediate,
+      bar: "bg-lime-400/70",
+    },
+    {
+      label: `Debole (NDVI < ${formatThreshold(thresholds.weakMax)})`,
+      value: variability.weak,
+      bar: "bg-amber-400/70",
+    },
+  ];
+  return (
+    <div className="border border-slate-800 bg-slate-900/40 p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[12px] font-semibold text-slate-200">
+          Variabilità di vigore — {formatDate(variability.date)}
+        </h3>
+        <span className="text-[10px] uppercase tracking-wide text-slate-500">
+          {variability.method === "histogram" ? "pixel reali · Statistical API" : "stima da percentili"} ·{" "}
+          {variability.validPixels.toLocaleString("it-IT")} pixel validi
+        </span>
+      </div>
+      <ul className="mt-3 space-y-2">
+        {classes.map((entry) => (
+          <li key={entry.label}>
+            <div className="flex items-baseline justify-between gap-3 text-[12px]">
+              <span className="text-slate-300">{entry.label}</span>
+              <span className="shrink-0 text-slate-500">
+                {entry.value.toLocaleString("it-IT", { maximumFractionDigits: 1 })}%
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={cn("h-full rounded-full", entry.bar)}
+                style={{ width: `${Math.max(2, entry.value)}%` }}
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[10px] leading-relaxed text-slate-500">{variability.note}</p>
+    </div>
+  );
+}
+
 function SectionHeading({
   eyebrow,
   title,
@@ -576,4 +641,14 @@ function SectionHeading({
 
 function formatArea(areaHectares: number): string {
   return areaHectares.toLocaleString("it-IT", { maximumFractionDigits: 1 });
+}
+
+function formatThreshold(value: number): string {
+  return value.toLocaleString("it-IT", { maximumFractionDigits: 2 });
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short", year: "numeric" }).format(
+    new Date(`${value}T00:00:00Z`),
+  );
 }

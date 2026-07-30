@@ -5,7 +5,7 @@ import pytest
 from src.domain import AnalysisArea
 from src.ingestion import statistical_api
 from src.ingestion.statistical_api import (
-    NDVI_STATISTICS_EVALSCRIPT,
+    VEGETATION_STATISTICS_EVALSCRIPT,
     build_statistical_request,
 )
 
@@ -48,11 +48,11 @@ class FakeOAuthSession:
         return FakeResponse()
 
 
-def test_build_statistical_request_uses_masked_ndvi_and_projected_geometry() -> None:
+def test_build_statistical_request_uses_masked_indices_and_projected_geometry() -> None:
     area = AnalysisArea.from_geojson("Campo pilota", FIELD_POLYGON)
 
     request_body = build_statistical_request(
-        NDVI_STATISTICS_EVALSCRIPT,
+        VEGETATION_STATISTICS_EVALSCRIPT,
         area,
         "2026-06-01",
         "2026-06-30",
@@ -77,15 +77,32 @@ def test_build_statistical_request_uses_masked_ndvi_and_projected_geometry() -> 
             "of": "P10D",
             "lastIntervalBehavior": "SHORTEN",
         },
-        "evalscript": NDVI_STATISTICS_EVALSCRIPT,
+        "evalscript": VEGETATION_STATISTICS_EVALSCRIPT,
         "resx": 20,
         "resy": 20,
     }
     assert request_body["calculations"]["ndvi"]["statistics"] == {
         "default": {"percentiles": {"k": [10, 50, 90]}},
     }
-    assert 'id: "dataMask"' in NDVI_STATISTICS_EVALSCRIPT
-    assert "invalidScl" in NDVI_STATISTICS_EVALSCRIPT
+    assert request_body["calculations"]["ndvi"]["histograms"] == {
+        "default": {"nBins": 20, "lowEdge": -1.0, "highEdge": 1.0},
+    }
+    assert request_body["calculations"]["ndmi"]["statistics"] == {
+        "default": {"percentiles": {"k": [10, 50, 90]}},
+    }
+
+
+def test_vegetation_evalscript_computes_ndvi_and_ndmi_with_same_masking() -> None:
+    script = VEGETATION_STATISTICS_EVALSCRIPT
+    # NDMI needs B11 on top of the NDVI bands; SCL/dataMask logic stays shared.
+    assert '"B11"' in script
+    assert 'id: "ndvi"' in script
+    assert 'id: "ndmi"' in script
+    assert 'bands: ["ndvi", "ndmi"]' in script  # per-output dataMask
+    assert "invalidScl" in script
+    assert "[0, 1, 2, 3, 8, 9, 10, 11]" in script
+    assert "(sample.B08 - sample.B04) / ndviDenominator" in script
+    assert "(sample.B08 - sample.B11) / ndmiDenominator" in script
 
 
 def test_fetch_ndvi_statistics_posts_payload_and_returns_json(
@@ -107,6 +124,8 @@ def test_fetch_ndvi_statistics_posts_payload_and_returns_json(
         "Content-Type": "application/json",
     }
     assert fake_oauth.request_body is not None
+    assert fake_oauth.request_body["aggregation"]["evalscript"] == VEGETATION_STATISTICS_EVALSCRIPT
+    assert set(fake_oauth.request_body["calculations"]) == {"ndvi", "ndmi"}
     assert result == {"data": [], "status": "OK"}
 
 
@@ -126,7 +145,7 @@ def test_build_statistical_request_rejects_invalid_options(
 
     with pytest.raises(ValueError, match=message):
         build_statistical_request(
-            NDVI_STATISTICS_EVALSCRIPT,
+            VEGETATION_STATISTICS_EVALSCRIPT,
             area,
             "2026-06-01",
             "2026-06-30",
