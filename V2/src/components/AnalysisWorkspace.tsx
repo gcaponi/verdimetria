@@ -21,6 +21,7 @@ import RealInsightsSection from "@/sections/RealInsightsSection";
 import InterventionsSection from "@/sections/InterventionsSection";
 import { analyzeArea } from "@/lib/analysis";
 import type { AnalysisStatus, FieldAnalysis } from "@/lib/analysis";
+import { getApiBaseUrl } from "@/lib/auth";
 import { FieldsApiError } from "@/lib/fields";
 import { useAuth } from "@/hooks/useAuth";
 import type { WmsLayer } from "@/lib/wms";
@@ -70,6 +71,13 @@ export default function AnalysisWorkspace({
   const analysis = precomputedAnalysis ?? currentState.analysis;
   const analysisStatus: AnalysisStatus = precomputedAnalysis ? "ready" : currentState.status;
   const analysisError = precomputedAnalysis ? null : currentState.error;
+  const [reportJob, setReportJob] = useState<{ key: string; jobId: string | null }>({
+    key: requestKey,
+    jobId: null,
+  });
+  const reportJobId = !precomputedAnalysis && reportJob.key === requestKey ? reportJob.jobId : null;
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (precomputedAnalysis) return;
@@ -91,6 +99,64 @@ export default function AnalysisWorkspace({
       });
     return () => controller.abort();
   }, [area, requestKey, getAuthHeader, logout, precomputedAnalysis]);
+
+  // Resolve the full job id for the PDF report: analysisId is job.pk.hex[:16],
+  // so match it against the dashed uuids of the field's job history.
+  useEffect(() => {
+    if (precomputedAnalysis || !analysis) return;
+    let cancelled = false;
+    getAuthHeader()
+      .then(async (authorization) => {
+        const response = await fetch(`${getApiBaseUrl()}/api/v1/fields/${area.id}/jobs/`, {
+          headers: { Authorization: authorization },
+        });
+        if (!response.ok) {
+          throw new FieldsApiError(`Storico analisi non disponibile (${response.status})`, response.status);
+        }
+        const jobs = (await response.json()) as Array<{ id: string }>;
+        return jobs.find((job) => job.id.replace(/-/g, "").startsWith(analysis.analysisId))?.id ?? null;
+      })
+      .then((jobId) => {
+        if (!cancelled) setReportJob({ key: requestKey, jobId });
+      })
+      .catch(() => {
+        if (!cancelled) setReportJob({ key: requestKey, jobId: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [precomputedAnalysis, analysis, area.id, getAuthHeader, requestKey]);
+
+  const downloadReport = () => {
+    if (!reportJobId || reportBusy) return;
+    setReportBusy(true);
+    setReportError(null);
+    getAuthHeader()
+      .then((authorization) =>
+        fetch(`${getApiBaseUrl()}/api/v1/jobs/${reportJobId}/report.pdf`, {
+          headers: { Authorization: authorization },
+        }),
+      )
+      .then(async (response) => {
+        if (response.status === 401) logout();
+        if (!response.ok) {
+          throw new FieldsApiError(`Report non disponibile (${response.status})`, response.status);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `verdimetria-report-${analysis?.analysisId ?? reportJobId}.pdf`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      })
+      .catch((error: unknown) => {
+        setReportError(error instanceof Error ? error.message : "Report non disponibile");
+      })
+      .finally(() => setReportBusy(false));
+  };
 
   return (
     <section className="border-y border-slate-800">
@@ -127,6 +193,10 @@ export default function AnalysisWorkspace({
           analysis={analysis}
           error={analysisError}
           onRetry={() => setRequestVersion((version) => version + 1)}
+          reportJobId={reportJobId}
+          reportBusy={reportBusy}
+          reportError={reportError}
+          onDownloadReport={downloadReport}
         />
         {activeTab === "overview" && <Overview area={area} analysis={analysis} status={analysisStatus} />}
         {activeTab === "soil" && (
@@ -403,7 +473,21 @@ interface AnalysisResultProps {
   onRetry: () => void;
 }
 
-function AnalysisRunStatus({ status, analysis, error, onRetry }: AnalysisResultProps) {
+function AnalysisRunStatus({
+  status,
+  analysis,
+  error,
+  onRetry,
+  reportJobId,
+  reportBusy,
+  reportError,
+  onDownloadReport,
+}: AnalysisResultProps & {
+  reportJobId: string | null;
+  reportBusy: boolean;
+  reportError: string | null;
+  onDownloadReport: () => void;
+}) {
   return (
     <div className="mb-5 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-slate-800 bg-slate-900/50 px-4 py-3 text-[11px]">
       <div className="flex items-center gap-2">
@@ -423,17 +507,21 @@ function AnalysisRunStatus({ status, analysis, error, onRetry }: AnalysisResultP
         </span>
       </div>
       <div className="flex items-center gap-2">
-        {status === "ready" && analysis && (
+        {reportError && status === "ready" && (
+          <span className="text-rose-300">{reportError}</span>
+        )}
+        {status === "ready" && analysis && reportJobId && (
           <button
             type="button"
-            onClick={() => window.print()}
-            className="no-print flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-lime-400/50 hover:text-lime-200"
+            onClick={onDownloadReport}
+            disabled={reportBusy}
+            className="flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-lime-400/50 hover:text-lime-200 disabled:opacity-60"
           >
-            <Download className="h-3.5 w-3.5" /> Esporta PDF
+            <Download className="h-3.5 w-3.5" /> {reportBusy ? "Preparazione..." : "Esporta PDF"}
           </button>
         )}
         {status === "error" && (
-          <button type="button" onClick={onRetry} className="no-print flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200">
+          <button type="button" onClick={onRetry} className="flex items-center gap-1.5 border border-slate-700 px-3 py-1.5 text-slate-200 hover:border-cyan-400/50 hover:text-cyan-200">
             <RefreshCw className="h-3.5 w-3.5" /> Riprova
           </button>
         )}

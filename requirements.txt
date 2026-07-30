@@ -32,6 +32,9 @@ redis==8.0.1
 folium==0.20.0
 matplotlib==3.10.8
 
+# Report PDF (A4) generato lato server
+reportlab==5.0.0
+
 # Test
 pytest==9.1.1
 pytest-django==4.12.0

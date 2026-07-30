@@ -1,8 +1,10 @@
+import uuid
 from typing import Any, cast
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
+from django.http import HttpResponse
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -13,6 +15,7 @@ from rest_framework.views import APIView
 from backend.accounts.models import User
 from backend.fields.jobs import build_job_params, compute_idempotency_key
 from backend.fields.models import AnalysisJob, Field, Intervention
+from backend.fields.report import build_report_pdf, cached_report_path
 from backend.fields.serializers import (
     AnalysisJobSerializer,
     BoundaryCreateSerializer,
@@ -152,6 +155,42 @@ class InterventionViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
         if self.request.user.is_anonymous:
             return Intervention.objects.none()
         return Intervention.objects.filter(owner=self.request.user)
+
+
+class JobReportView(APIView):
+    """GET /api/v1/jobs/<id>/report.pdf — A4 agronomic report of a completed job.
+
+    The PDF is generated server-side (reportlab) from the job result and cached
+    on disk under settings.REPORT_CACHE_DIR; the cache key embeds completed_at,
+    so a retried job re-completing with a new result invalidates it.
+    """
+
+    def get(self, request: Request, job_id: uuid.UUID, *args: Any, **kwargs: Any) -> HttpResponse:
+        try:
+            job = AnalysisJob.objects.select_related("field").get(pk=job_id)
+        except AnalysisJob.DoesNotExist:
+            return Response({"detail": "Job non trovato"}, status=status.HTTP_404_NOT_FOUND)
+        if job.owner_id != request.user.pk:
+            return Response(
+                {"detail": "Non sei il proprietario di questo job"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if job.status != AnalysisJob.Status.COMPLETED or not job.result:
+            return Response(
+                {"detail": "Report disponibile solo per analisi completate"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        report_path = cached_report_path(job)
+        if not report_path.exists():
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            for stale in report_path.parent.glob(f"{job.pk}-*.pdf"):
+                stale.unlink()
+            report_path.write_bytes(build_report_pdf(job))
+        response = HttpResponse(report_path.read_bytes(), content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'attachment; filename="verdimetria-report-{job.pk.hex[:16]}.pdf"'
+        )
+        return response
 
 
 class DemoAnalysisView(APIView):
