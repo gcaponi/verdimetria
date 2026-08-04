@@ -24,11 +24,6 @@ def api_client() -> APIClient:
     return APIClient()
 
 
-@pytest.fixture
-def user() -> User:
-    return User.objects.create_user(email="farmer@example.com", password="StrongPass-2026!")
-
-
 def _create_field(api_client: APIClient, user: User, payload: dict[str, Any]) -> Any:
     api_client.force_authenticate(user)
     return api_client.post("/api/v1/fields/", payload, format="json")

@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "backend.accounts",
     "backend.fields",
+    "backend.billing",
 ]
 
 MIDDLEWARE = [
@@ -167,3 +168,9 @@ CELERY_TASK_TIME_LIMIT = 30 * 60
 REPORT_CACHE_DIR = os.getenv("REPORT_CACHE_DIR", BASE_DIR / "report-cache")
 
 MAX_FIELDS_PER_ACCOUNT = int(os.getenv("MAX_FIELDS_PER_ACCOUNT", "3"))
+
+# Paywall abbonamenti (Stripe). Vuoti in locale: checkout/webhook falliscono
+# con errore esplicito, il gate 402 resta attivo per tutti i non abbonati.
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")

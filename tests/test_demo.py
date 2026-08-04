@@ -41,11 +41,6 @@ def api_client() -> APIClient:
     return APIClient()
 
 
-@pytest.fixture
-def user() -> User:
-    return User.objects.create_user(email="farmer@example.com", password="StrongPass-2026!")
-
-
 @pytest.mark.django_db
 def test_demo_endpoint_404_without_demo_field(api_client: APIClient) -> None:
     response = api_client.get("/api/v1/demo/")

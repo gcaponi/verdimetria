@@ -39,11 +39,6 @@ def api_client() -> APIClient:
     return APIClient()
 
 
-@pytest.fixture
-def user() -> User:
-    return User.objects.create_user(email="farmer@example.com", password="StrongPass-2026!")
-
-
 @pytest.mark.django_db
 def test_register_and_obtain_jwt(api_client: APIClient) -> None:
     register_response = api_client.post(

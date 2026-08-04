@@ -19,9 +19,11 @@ import {
   listFields,
   storedFieldToMapArea,
 } from "@/lib/fields";
+import { BillingApiError, getEntitlement, type Entitlement } from "@/lib/billing";
 import {
-  CloudSun,
   ChevronDown,
+  CloudSun,
+  CreditCard,
   Database,
   Download,
   Layers,
@@ -51,6 +53,8 @@ export default function HomeNational() {
   const [fieldsError, setFieldsError] = useState<string | null>(null);
   const [fieldsReloadKey, setFieldsReloadKey] = useState(0);
   const fieldsRequestRef = useRef(0);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const [upgradeRequired, setUpgradeRequired] = useState(false);
   const [layerId, setLayerId] = useState("NDVI");
   const [layers, setLayers] = useState(WMS_LAYERS);
   const isDesktopLayout = useDesktopLayout();
@@ -109,6 +113,26 @@ export default function HomeNational() {
   }, [fieldsReloadKey, getAuthHeader, isAuthenticated, logout]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+    const controller = new AbortController();
+    getAuthHeader()
+      .then((authorization) => getEntitlement(authorization, controller.signal))
+      .then((loaded) => {
+        setEntitlement(loaded);
+        if (loaded.subscribed) {
+          // Abbonamento (ri)attivo: l'errore 402 precedente non vale piu'.
+          setUpgradeRequired(false);
+          setFieldsError(null);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (controller.signal.aborted) return;
+        if (loadError instanceof BillingApiError && loadError.status === 401) logout();
+      });
+    return () => controller.abort();
+  }, [getAuthHeader, isAuthenticated, logout]);
+
+  useEffect(() => {
     if (!authOpen && !isAuthenticated && pendingBoundary && !confirmBoundaryOpen) {
       setPendingBoundary(null);
     }
@@ -117,6 +141,10 @@ export default function HomeNational() {
   const selectedArea = useMemo(
     () => areas.find((area) => area.id === selectedAreaId) ?? null,
     [areas, selectedAreaId]
+  );
+  const shownEntitlement = isAuthenticated ? entitlement : null;
+  const needsUpgrade = Boolean(
+    upgradeRequired && shownEntitlement && !shownEntitlement.subscribed
   );
   const activeLayer = layers.find((layer) => layer.id === layerId) ?? WMS_LAYERS[0];
 
@@ -146,6 +174,12 @@ export default function HomeNational() {
       setConfirmBoundaryOpen(false);
     } catch (saveError) {
       if (saveError instanceof FieldsApiError && saveError.status === 401) logout();
+      if (saveError instanceof FieldsApiError && saveError.status === 402) {
+        setUpgradeRequired(true);
+        setEntitlement((current) =>
+          current ? { ...current, subscribed: false } : current,
+        );
+      }
       setFieldsError(fieldErrorMessage(saveError));
     } finally {
       setFieldSaving(false);
@@ -203,17 +237,25 @@ export default function HomeNational() {
       {fieldsError && !confirmBoundaryOpen && (
         <div role="alert" className="flex items-center gap-3 border-y border-rose-400/30 bg-rose-400/5 px-3 py-2 text-sm text-rose-200">
           <span className="min-w-0 flex-1">{fieldsError}</span>
-          {isAuthenticated && (
-            <button
-              type="button"
-              onClick={() => setFieldsReloadKey((current) => current + 1)}
-              title="Riprova caricamento"
-              aria-label="Riprova caricamento"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-300/30 hover:bg-rose-300/10"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
-          )}
+          {isAuthenticated &&
+            (needsUpgrade ? (
+              <Link
+                to="/account"
+                className="flex h-8 shrink-0 items-center gap-1 rounded-md border border-lime-300/40 px-2.5 text-[12px] font-semibold text-lime-300 transition-colors hover:bg-lime-300/10"
+              >
+                Abbonati →
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setFieldsReloadKey((current) => current + 1)}
+                title="Riprova caricamento"
+                aria-label="Riprova caricamento"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-rose-300/30 hover:bg-rose-300/10"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            ))}
         </div>
       )}
       {selectedArea ? (
@@ -328,6 +370,14 @@ export default function HomeNational() {
                 <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> Campi
               </span>
             )}
+            {isAuthenticated && (
+              <Link
+                to="/account"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-[12px] font-medium text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+              >
+                <CreditCard className="h-3.5 w-3.5" /> Abbonamento
+              </Link>
+            )}
             <AuthControl
               open={authOpen}
               onOpenChange={setAuthOpen}
@@ -374,6 +424,20 @@ export default function HomeNational() {
           </div>
         </div>
       </header>
+
+      {shownEntitlement !== null && !shownEntitlement.subscribed && (
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[12px] text-amber-200">
+          <span>
+            Abbonamento non attivo: la creazione di campi e le analisi richiedono un piano.
+          </span>
+          <Link
+            to="/account"
+            className="font-semibold text-amber-100 underline underline-offset-2 hover:text-white"
+          >
+            Abbonati →
+          </Link>
+        </div>
+      )}
 
       <main className="w-full px-3 py-4 sm:px-4 xl:px-5">
         {isDesktopLayout ? (

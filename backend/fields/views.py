@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from backend.accounts.models import User
+from backend.billing.services import get_entitlements
 from backend.fields.jobs import build_job_params, compute_idempotency_key
 from backend.fields.models import AnalysisJob, Field, Intervention
 from backend.fields.report import build_report_pdf, cached_report_path
@@ -37,6 +38,12 @@ class FieldViewSet(viewsets.ModelViewSet):
 
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         owner = cast(User, request.user)
+        # Paywall pay-to-use: i campi sono un diritto di abbonamento.
+        if not get_entitlements(owner)["subscribed"]:
+            return Response(
+                {"detail": "Abbonamento attivo richiesto per creare campi"},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         # Demo fields are platform-managed and must not consume the user quota.
         owned_count = Field.objects.filter(owner=owner, is_demo=False).count()
         if owned_count >= settings.MAX_FIELDS_PER_ACCOUNT:
@@ -71,6 +78,13 @@ class FieldViewSet(viewsets.ModelViewSet):
         return self._create_job(request, field)
 
     def _create_job(self, request: Request, field: Field) -> Response:
+        # Paywall pay-to-use: l'analisi e' un diritto di abbonamento. I campi
+        # demo restano interamente usabili (demo pubblica e interni).
+        if not field.is_demo and not get_entitlements(cast(User, request.user))["subscribed"]:
+            return Response(
+                {"detail": "Abbonamento attivo richiesto per avviare analisi"},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         data = request.data if isinstance(request.data, dict) else {}
         try:
             params = build_job_params(

@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from backend.accounts.models import User
+from backend.billing.models import Subscription
 from backend.fields.models import Field
 
 FIELD_POLYGON: dict[str, Any] = {
@@ -22,11 +23,6 @@ FIELD_POLYGON: dict[str, Any] = {
 @pytest.fixture
 def api_client() -> APIClient:
     return APIClient()
-
-
-@pytest.fixture
-def user() -> User:
-    return User.objects.create_user(email="farmer@example.com", password="StrongPass-2026!")
 
 
 def create_field(api_client: APIClient, name: str = "Campo prova") -> Response:
@@ -72,6 +68,7 @@ def test_field_cap_does_not_affect_other_users(api_client: APIClient, user: User
         email="other@example.com",
         password="StrongPass-2026!",
     )
+    Subscription.objects.create(user=other_user, status="active")
     api_client.force_authenticate(other_user)
 
     response = create_field(api_client)

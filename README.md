@@ -212,7 +212,10 @@ Variabili `.env` rilevanti in produzione:
 - `TINITALY_CACHE_DIR=/opt/verdimetria/data/tinitaly` - cache lazy-tile DTM 10m;
 - `CLC_PLUS_RASTER_PATH=/opt/verdimetria/data/clc/clc-plus-2021-italy-10m.tif`;
 - `REPORT_CACHE_DIR` - cache PDF report (default `<BASE_DIR>/report-cache`);
-- `MAX_FIELDS_PER_ACCOUNT=3` - cap anti-abuso campi per account.
+- `MAX_FIELDS_PER_ACCOUNT=3` - cap anti-abuso campi per account;
+- `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICE_ID` - paywall
+  abbonamenti Stripe; senza questi valori checkout/portal/webhook falliscono,
+  ma il gate 402 resta attivo per tutti i non abbonati.
 
 Il campo demo pubblico è un `Field` con `is_demo=True` (flag solo via shell,
 non esposto in API) + almeno un job completato; dopo ogni deploy che cambia il
@@ -223,7 +226,12 @@ contratto di analisi va rigenerato il job demo.
 La **v1.0** (tag git) chiude il prodotto osservativo da satellite: pipeline
 quantitativa NDVI/NDMI/variabilità/morfometria/land-cover, AI agronomo con
 evidenze, diario interventi, report PDF A4, demo pubblica, anti-abuso, email
-transazionali. Suite 111 test verdi.
+transazionali. Suite 128 test verdi.
+
+Il **paywall** (agosto 2026) attiva la monetizzazione: registrazione libera, ma
+creazione campi e analisi richiedono un abbonamento flat Stripe (pagina
+`/account`, checkout/portal, webhook idempotente, gate 402; staff e campo demo
+bypassano). Demo pubblica invariata.
 
 Prossimi passi reali:
 

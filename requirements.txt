@@ -27,6 +27,7 @@ psycopg[binary]==3.3.4
 python-dotenv==1.2.2
 celery==5.6.3
 redis==8.0.1
+stripe==15.4.0        # Paywall abbonamenti (checkout hosted + webhook)
 
 # Visualizzazione
 folium==0.20.0
