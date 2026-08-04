@@ -174,3 +174,8 @@ MAX_FIELDS_PER_ACCOUNT = int(os.getenv("MAX_FIELDS_PER_ACCOUNT", "3"))
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
+
+# Purge del cestino (Fase 2): il purge e' annullato se il marker del backup
+# pgBackRest piu' recente e' assente o piu' vecchio di PURGE_BACKUP_MAX_AGE_HOURS.
+PURGE_BACKUP_MARKER = os.getenv("PURGE_BACKUP_MARKER", "/tmp/last-verdimetria-backup.txt")
+PURGE_BACKUP_MAX_AGE_HOURS = int(os.getenv("PURGE_BACKUP_MAX_AGE_HOURS", "48"))

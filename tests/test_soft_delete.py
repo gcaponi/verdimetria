@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import DatabaseError, IntegrityError
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -191,7 +192,7 @@ def test_purge_removes_records_older_than_30_days(
         deleted_at=timezone.now() - timedelta(days=31)
     )
 
-    call_command("purge_trash")
+    call_command("purge_trash", skip_backup_check=True)
 
     assert not Field.all_objects.filter(pk=field.pk).exists()
     purge_audit = AuditEntry.objects.get(action=AuditEntry.Action.PURGE)
@@ -203,7 +204,7 @@ def test_purge_preserves_recent_trash(api_client: APIClient, user: User, field: 
     api_client.force_authenticate(user)
     api_client.delete(f"/api/v1/fields/{field.pk}/")
 
-    call_command("purge_trash")
+    call_command("purge_trash", skip_backup_check=True)
 
     assert Field.all_objects.filter(pk=field.pk).exists()
     assert not AuditEntry.objects.filter(action=AuditEntry.Action.PURGE).exists()
@@ -232,9 +233,42 @@ def test_purge_removes_report_pdfs(
         deleted_at=timezone.now() - timedelta(days=31)
     )
 
-    call_command("purge_trash")
+    call_command("purge_trash", skip_backup_check=True)
 
     assert not pdf.exists()
+
+
+@pytest.mark.django_db
+def test_purge_requires_recent_backup(
+    api_client: APIClient, user: User, field: Field, settings, tmp_path: Path
+) -> None:
+    import os
+    import time
+
+    settings.PURGE_BACKUP_MARKER = tmp_path / "last-backup.txt"
+    api_client.force_authenticate(user)
+    api_client.delete(f"/api/v1/fields/{field.pk}/")
+    Field.all_objects.filter(pk=field.pk).update(
+        deleted_at=timezone.now() - timedelta(days=31)
+    )
+
+    # Nessun marker: purge annullato.
+    with pytest.raises(CommandError, match="backup recente"):
+        call_command("purge_trash")
+    assert Field.all_objects.filter(pk=field.pk).exists()
+
+    # Marker piu' vecchio di 48h: purge annullato.
+    marker = tmp_path / "last-backup.txt"
+    marker.touch()
+    old_time = time.time() - 49 * 3600
+    os.utime(marker, (old_time, old_time))
+    with pytest.raises(CommandError, match="backup recente"):
+        call_command("purge_trash")
+
+    # Marker fresco: purge eseguito.
+    marker.touch()
+    call_command("purge_trash")
+    assert not Field.all_objects.filter(pk=field.pk).exists()
 
 
 @pytest.mark.django_db
