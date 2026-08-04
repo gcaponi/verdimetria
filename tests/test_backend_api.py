@@ -223,7 +223,7 @@ def test_fields_are_isolated_by_owner(api_client: APIClient, user: User) -> None
 
 
 @pytest.mark.django_db
-def test_delete_field_removes_field_and_boundaries(api_client: APIClient, user: User) -> None:
+def test_delete_field_trashes_field_and_hides_boundaries(api_client: APIClient, user: User) -> None:
     api_client.force_authenticate(user)
     create_response = api_client.post(
         "/api/v1/fields/",
@@ -234,9 +234,11 @@ def test_delete_field_removes_field_and_boundaries(api_client: APIClient, user: 
 
     delete_response = api_client.delete(f"/api/v1/fields/{field_id}/")
 
+    # Fase 2: DELETE = cestino (tombstone), il record resta nel DB 30 giorni.
     assert delete_response.status_code == 204
     assert Field.objects.filter(pk=field_id).count() == 0
-    assert BoundaryVersion.objects.filter(field_id=field_id).count() == 0
+    assert Field.all_objects.get(pk=field_id).deleted_at is not None
+    assert BoundaryVersion.objects.filter(field_id=field_id).count() == 1
     list_response = api_client.get("/api/v1/fields/")
     assert list_response.data == []
 

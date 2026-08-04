@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from backend.accounts.models import User
 from backend.billing.services import get_entitlements
 from backend.fields.jobs import build_job_params, compute_idempotency_key
-from backend.fields.models import AnalysisJob, Field, Intervention
+from backend.fields.models import AnalysisJob, AuditEntry, Field, Intervention
 from backend.fields.report import build_report_pdf, cached_report_path
 from backend.fields.serializers import (
     AnalysisJobSerializer,
@@ -149,6 +149,61 @@ class FieldViewSet(viewsets.ModelViewSet):
         serializer.save(field=field, owner=cast(User, request.user))
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        """Cestino (Fase 2): tombstone, non hard delete. Recuperabile 30 giorni."""
+        field = self.get_object()
+        if field.is_demo:
+            return Response(
+                {"detail": "Il campo dimostrativo non e' cancellabile"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        actor = cast(User, request.user)
+        reason = ""
+        if isinstance(request.data, dict):
+            reason = str(request.data.get("reason", ""))
+        with transaction.atomic():
+            field.soft_delete(actor=actor, reason=reason)
+            AuditEntry.objects.create(
+                action=AuditEntry.Action.DELETE,
+                entity_type="field",
+                entity_id=str(field.pk),
+                actor=actor,
+                reason=reason,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=("get",), url_path="trash")
+    def trash(self, request: Request) -> Response:
+        """Campi cestinati dell'utente (recuperabili entro 30 giorni)."""
+        queryset = Field.all_objects.filter(
+            owner=request.user, deleted_at__isnull=False
+        ).order_by("-deleted_at")
+        return Response(self.get_serializer(queryset, many=True).data)
+
+    @action(detail=True, methods=("post",), url_path="restore")
+    def restore(self, request: Request, **kwargs: Any) -> Response:
+        """Ripristino controllato (Fase 2): solo owner, registrato nell'audit."""
+        actor = cast(User, request.user)
+        field = Field.all_objects.filter(owner=actor, pk=kwargs.get("pk")).first()
+        if field is None:
+            return Response(
+                {"detail": "Campo non trovato"}, status=status.HTTP_404_NOT_FOUND
+            )
+        if field.deleted_at is None:
+            return Response(
+                {"detail": "Il campo non e' nel cestino"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        with transaction.atomic():
+            field.restore()
+            AuditEntry.objects.create(
+                action=AuditEntry.Action.RESTORE,
+                entity_type="field",
+                entity_id=str(field.pk),
+                actor=actor,
+            )
+        return Response(self.get_serializer(field).data)
+
 
 class AnalysisJobViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AnalysisJobSerializer
@@ -157,11 +212,14 @@ class AnalysisJobViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self) -> QuerySet[AnalysisJob]:
         if self.request.user.is_anonymous:
             return AnalysisJob.objects.none()
-        return AnalysisJob.objects.filter(owner=self.request.user)
+        # I job di campi cestinati scompaiono dalle viste ordinarie (Fase 2).
+        return AnalysisJob.objects.filter(
+            owner=self.request.user, field__deleted_at__isnull=True
+        )
 
 
 class InterventionViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
-    """DELETE /api/v1/interventions/:id/ — solo il proprietario."""
+    """DELETE /api/v1/interventions/:id/ — cestino (Fase 2), solo proprietario."""
     serializer_class = InterventionSerializer
     http_method_names = ("delete", "head", "options")
 
@@ -169,6 +227,23 @@ class InterventionViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
         if self.request.user.is_anonymous:
             return Intervention.objects.none()
         return Intervention.objects.filter(owner=self.request.user)
+
+    def destroy(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        intervention = self.get_object()
+        actor = cast(User, request.user)
+        reason = ""
+        if isinstance(request.data, dict):
+            reason = str(request.data.get("reason", ""))
+        with transaction.atomic():
+            intervention.soft_delete(actor=actor, reason=reason)
+            AuditEntry.objects.create(
+                action=AuditEntry.Action.DELETE,
+                entity_type="intervention",
+                entity_id=str(intervention.pk),
+                actor=actor,
+                reason=reason,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class JobReportView(APIView):

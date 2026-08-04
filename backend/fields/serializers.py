@@ -76,10 +76,11 @@ class FieldSerializer(serializers.ModelSerializer):
             "boundary",
             "boundary_source",
             "latest_boundary",
+            "deleted_at",
             "created_at",
             "updated_at",
         )
-        read_only_fields = ("id", "created_at", "updated_at")
+        read_only_fields = ("id", "deleted_at", "created_at", "updated_at")
 
     def validate_boundary(self, value: dict[str, Any]) -> AnalysisArea:
         try:
