@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
+import json
 import pytest
 import stripe
 from rest_framework.test import APIClient
@@ -89,7 +90,7 @@ def post_webhook(api_client: APIClient, event: dict[str, Any]) -> Any:
     ):
         return api_client.post(
             "/api/v1/billing/webhook/",
-            data="{}",
+            data=json.dumps(event),
             content_type="application/json",
             HTTP_STRIPE_SIGNATURE="t=1,v1=fake",
         )
@@ -368,3 +369,26 @@ def test_staff_bypasses_paywall(api_client: APIClient, user: User) -> None:
     user.save(update_fields=("is_staff",))
     api_client.force_authenticate(user)
     assert create_field(api_client).status_code == 201
+
+
+@pytest.mark.django_db
+def test_webhook_reads_data_from_raw_body_not_sdk_object(
+    api_client: APIClient, user: User
+) -> None:
+    """Regressione 2026-08-05: stripe-python v15 non espone .get() sugli
+    StripeObject. Il webhook deve leggere i dati dal body JSON grezzo anche se
+    construct_event restituisce un oggetto opaco."""
+    activate(user, status="incomplete")
+    event = subscription_event("evt_raw_body", "active")
+    with patch(
+        "backend.billing.views.stripe.Webhook.construct_event", return_value=object()
+    ):
+        response = api_client.post(
+            "/api/v1/billing/webhook/",
+            data=json.dumps(event),
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="t=1,v1=fake",
+        )
+
+    assert response.status_code == 200
+    assert Subscription.objects.get(user=user).status == "active"

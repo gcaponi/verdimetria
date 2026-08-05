@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import json
 import pytest
 from rest_framework.test import APIClient
 
@@ -314,7 +315,7 @@ def test_webhook_subscription_created_out_of_order_links_via_customer_metadata(
     ):
         response = api_client.post(
             "/api/v1/billing/webhook/",
-            data="{}",
+            data=json.dumps(event),
             content_type="application/json",
             HTTP_STRIPE_SIGNATURE="t=1,v1=fake",
         )
@@ -356,7 +357,7 @@ def test_webhook_reads_period_end_from_items_basil_shape(
     with patch("backend.billing.views.stripe.Webhook.construct_event", return_value=event):
         response = api_client.post(
             "/api/v1/billing/webhook/",
-            data="{}",
+            data=json.dumps(event),
             content_type="application/json",
             HTTP_STRIPE_SIGNATURE="t=1,v1=fake",
         )

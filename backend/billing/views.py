@@ -8,6 +8,7 @@ una sola volta in `StripeEvent` per idempotenza sui replay.
 from datetime import UTC, datetime
 from typing import Any, Callable, cast
 
+import json
 import stripe
 from django.conf import settings
 from rest_framework import status
@@ -101,26 +102,30 @@ class WebhookView(APIView):
     def post(self, request: Request) -> Response:
         signature = request.headers.get("Stripe-Signature", "")
         try:
-            event = stripe.Webhook.construct_event(
+            # construct_event verifica la firma HMAC. I dati vengono letti dal
+            # body grezzo (dict nativi): gli oggetti SDK v15 non supportano
+            # .get() e non vanno usati per la business logic.
+            stripe.Webhook.construct_event(
                 request.body,
                 signature,
                 settings.STRIPE_WEBHOOK_SECRET,
             )
+            payload = json.loads(request.body)
         except (ValueError, stripe.error.SignatureVerificationError):
             return Response(
                 {"detail": "Firma del webhook non valida"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        event_id = str(event["id"])
+        event_id = str(payload["id"])
         if StripeEvent.objects.filter(event_id=event_id).exists():
             # Replay di Stripe: gia' processato, nessuna azione.
             return Response({"received": True, "duplicate": True})
 
-        StripeEvent.objects.create(event_id=event_id, event_type=str(event["type"]))
-        handler = HANDLERS.get(str(event["type"]))
+        StripeEvent.objects.create(event_id=event_id, event_type=str(payload["type"]))
+        handler = HANDLERS.get(str(payload["type"]))
         if handler is not None:
-            handler(event["data"]["object"])
+            handler(payload["data"]["object"])
         return Response({"received": True})
 
 
