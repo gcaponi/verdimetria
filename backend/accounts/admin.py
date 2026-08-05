@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.db import connection
 
 from backend.accounts.models import User
 
@@ -37,3 +38,22 @@ class VerdimetriaUserAdmin(UserAdmin):
             },
         ),
     )
+
+    def _enable_purge(self) -> None:
+        """Abilita il purge SOLO per la transazione corrente.
+
+        La guardia DB `verdimetria_guard` blocca i DELETE fuori da una sessione
+        con `verdimetria.allow_purge=on`. L'eliminazione dall'admin e'
+        esplicita e riservata a staff/superuser, quindi il bypass vale solo
+        per questa transazione (SET LOCAL decade al commit/rollback).
+        """
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL verdimetria.allow_purge = 'on'")
+
+    def delete_model(self, request, obj):
+        self._enable_purge()
+        super().delete_model(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        self._enable_purge()
+        super().delete_queryset(request, queryset)
