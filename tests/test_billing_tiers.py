@@ -269,3 +269,15 @@ def test_plus_tier_has_no_hectare_limit(
     activate(user, plan_id="price_plus")
     api_client.force_authenticate(user)
     assert create_field(api_client, BIG_POLYGON).status_code == 201
+
+
+@pytest.mark.django_db
+def test_billing_app_ready_sets_stripe_api_key(settings: Any) -> None:
+    """Regressione 2026-08-05: senza stripe.api_key ogni call reale dava 500,
+    ma i test (tutti mockati) restavano verdi."""
+    import stripe as stripe_lib
+    from django.apps import apps
+
+    settings.STRIPE_SECRET_KEY = "sk_test_regression"
+    apps.get_app_config("billing").ready()
+    assert stripe_lib.api_key == "sk_test_regression"
