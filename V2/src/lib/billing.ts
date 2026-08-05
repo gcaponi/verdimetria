@@ -1,10 +1,21 @@
 import { getApiBaseUrl } from "@/lib/auth";
 
+export interface Plan {
+  tier: string;
+  label: string;
+  amount_eur_month: number;
+  max_hectares: number | null;
+  price_id: string;
+}
+
 export interface Entitlement {
   subscribed: boolean;
   status: string;
   current_period_end: string | null;
   max_fields: number;
+  tier: string | null;
+  max_hectares: number | null;
+  plans: Plan[];
 }
 
 export class BillingApiError extends Error {
@@ -26,10 +37,13 @@ export async function getEntitlement(
   });
 }
 
-export async function startCheckout(authorization: string): Promise<{ url: string }> {
+export async function startCheckout(
+  authorization: string,
+  priceId?: string,
+): Promise<{ url: string }> {
   return billingRequest<{ url: string }>("/api/v1/billing/checkout/", authorization, {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify(priceId ? { price_id: priceId } : {}),
   });
 }
 

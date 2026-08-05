@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from backend.accounts.models import User
-from backend.billing.services import get_entitlements
+from backend.billing.services import BillingGateError, get_entitlements
 from backend.fields.jobs import build_job_params, compute_idempotency_key
 from backend.fields.models import AnalysisJob, AuditEntry, Field, Intervention
 from backend.fields.report import build_report_pdf, cached_report_path
@@ -56,7 +56,14 @@ class FieldViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
-        return super().create(request, *args, **kwargs)
+        try:
+            return super().create(request, *args, **kwargs)
+        except BillingGateError as error:
+            # Quota ettari cumulativa del tier superata (vedi serializers).
+            return Response(
+                {"detail": str(error)},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
 
     @action(detail=True, methods=("post",), url_path="boundaries")
     def create_boundary(self, request: Request, **kwargs: Any) -> Response:
@@ -66,7 +73,13 @@ class FieldViewSet(viewsets.ModelViewSet):
             context={"request": request, "field": field},
         )
         serializer.is_valid(raise_exception=True)
-        boundary = serializer.save()
+        try:
+            boundary = serializer.save()
+        except BillingGateError as error:
+            return Response(
+                {"detail": str(error)},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         return Response(BoundaryVersionSerializer(boundary).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=("get", "post"), url_path="jobs")

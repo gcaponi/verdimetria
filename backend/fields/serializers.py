@@ -6,6 +6,7 @@ from rest_framework import serializers
 from rest_framework.request import Request
 
 from backend.accounts.models import User
+from backend.billing.services import enforce_hectare_quota
 from backend.fields.models import AnalysisJob, BoundaryVersion, Field, Intervention
 from backend.fields.services import append_boundary, ensure_italy_coverage
 from src.domain import AnalysisArea
@@ -96,6 +97,9 @@ class FieldSerializer(serializers.ModelSerializer):
         source = str(validated_data.pop("boundary_source"))
         request = cast(Request, self.context["request"])
         owner = cast(User, request.user)
+        # Quota ettari CUMULATIVA del tier: include i boundary correnti di
+        # tutti i campi esistenti + questo nuovo boundary.
+        enforce_hectare_quota(owner, area.area_hectares(area.local_utm_crs()))
         field = Field.objects.create(owner=owner, **validated_data)
         append_boundary(field, area, source)
         return field
@@ -126,4 +130,12 @@ class BoundaryCreateSerializer(serializers.Serializer):
     def create(self, validated_data: dict[str, Any]) -> BoundaryVersion:
         field = cast(Field, self.context["field"])
         area = cast(AnalysisArea, validated_data["geometry"])
+        if not field.is_demo:
+            # La nuova versione sostituisce quella corrente del campo: il
+            # totale cumulativo esclude il boundary precedente di questo campo.
+            enforce_hectare_quota(
+                field.owner,
+                area.area_hectares(area.local_utm_crs()),
+                exclude_field_id=field.pk,
+            )
         return append_boundary(field, area, str(validated_data["source"]))

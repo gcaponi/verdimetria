@@ -27,3 +27,6 @@ outputs/*
 
 # Legacy Kimi export - synthetic data, not part of runtime
 app/
+
+# Stripe quickstart sample (reference only, not part of runtime)
+stripe-sample-code/

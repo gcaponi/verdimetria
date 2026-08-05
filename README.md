@@ -213,9 +213,10 @@ Variabili `.env` rilevanti in produzione:
 - `CLC_PLUS_RASTER_PATH=/opt/verdimetria/data/clc/clc-plus-2021-italy-10m.tif`;
 - `REPORT_CACHE_DIR` - cache PDF report (default `<BASE_DIR>/report-cache`);
 - `MAX_FIELDS_PER_ACCOUNT=3` - cap anti-abuso campi per account;
-- `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICE_ID` - paywall
-  abbonamenti Stripe; senza questi valori checkout/portal/webhook falliscono,
-  ma il gate 402 resta attivo per tutti i non abbonati.
+- `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` - paywall abbonamenti Stripe;
+- `STRIPE_PRICE_BASIC` / `STRIPE_PRICE_PRO` / `STRIPE_PRICE_PLUS` - price_id dei
+  3 tier mensili (5/15/15+ ha). Senza questi valori checkout/portal/webhook
+  falliscono, ma il gate 402 resta attivo per tutti i non abbonati.
 
 Il campo demo pubblico è un `Field` con `is_demo=True` (flag solo via shell,
 non esposto in API) + almeno un job completato; dopo ogni deploy che cambia il
@@ -229,9 +230,12 @@ evidenze, diario interventi, report PDF A4, demo pubblica, anti-abuso, email
 transazionali. Suite 128 test verdi.
 
 Il **paywall** (agosto 2026) attiva la monetizzazione: registrazione libera, ma
-creazione campi e analisi richiedono un abbonamento flat Stripe (pagina
-`/account`, checkout/portal, webhook idempotente, gate 402; staff e campo demo
-bypassano). Demo pubblica invariata.
+creazione campi e analisi richiedono un abbonamento Stripe a 3 tier mensili
+(Basic 14,99 € fino a 5 ha, Pro 34,99 € fino a 15 ha, Plus 54,99 € illimitato).
+Limite ettari **cumulativo** sui boundary correnti dei campi; disdetta libera
+con accesso fino a scadenza (`cancel_at_period_end`). Pagina `/account` con
+card piani, checkout/portal, webhook idempotente, gate 402; staff e campo demo
+bypassano. Demo pubblica invariata.
 
 Prossimi passi reali:
 

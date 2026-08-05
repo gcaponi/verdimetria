@@ -40,10 +40,26 @@ class CheckoutView(APIView):
                 defaults={"stripe_customer_id": customer_id},
             )
 
+        requested_price = ""
+        if isinstance(request.data, dict):
+            requested_price = str(request.data.get("price_id") or "").strip()
+        if not requested_price:
+            requested_price = str(settings.STRIPE_TIERS["basic"]["price_id"])
+        allowed_prices = {
+            str(tier["price_id"])
+            for tier in settings.STRIPE_TIERS.values()
+            if tier["price_id"]
+        }
+        if allowed_prices and requested_price not in allowed_prices:
+            return Response(
+                {"detail": "Piano non valido"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         session = stripe.checkout.Session.create(
             mode="subscription",
             customer=customer_id,
-            line_items=[{"price": settings.STRIPE_PRICE_ID, "quantity": 1}],
+            line_items=[{"price": requested_price, "quantity": 1}],
             success_url=f"{settings.FRONTEND_URL.rstrip('/')}/account?checkout=success",
             cancel_url=f"{settings.FRONTEND_URL.rstrip('/')}/account?checkout=cancelled",
             client_reference_id=str(user.pk),

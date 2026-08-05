@@ -173,7 +173,29 @@ MAX_FIELDS_PER_ACCOUNT = int(os.getenv("MAX_FIELDS_PER_ACCOUNT", "3"))
 # con errore esplicito, il gate 402 resta attivo per tutti i non abbonati.
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
+# Tier di abbonamento (price_id Stripe -> limite ettari). Il limite e'
+# CUMULATIVO: somma delle aree dei boundary correnti di tutti i campi vivi
+# dell'utente (None = illimitato). Vuoti in locale.
+STRIPE_TIERS = {
+    "basic": {
+        "price_id": os.getenv("STRIPE_PRICE_BASIC", ""),
+        "label": "Basic",
+        "amount_eur_month": 14.99,
+        "max_hectares": 5.0,
+    },
+    "pro": {
+        "price_id": os.getenv("STRIPE_PRICE_PRO", ""),
+        "label": "Pro",
+        "amount_eur_month": 34.99,
+        "max_hectares": 15.0,
+    },
+    "plus": {
+        "price_id": os.getenv("STRIPE_PRICE_PLUS", ""),
+        "label": "Plus",
+        "amount_eur_month": 54.99,
+        "max_hectares": None,
+    },
+}
 
 # Purge del cestino (Fase 2): il purge e' annullato se il marker del backup
 # pgBackRest piu' recente e' assente o piu' vecchio di PURGE_BACKUP_MAX_AGE_HOURS.

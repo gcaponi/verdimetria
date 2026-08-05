@@ -8,13 +8,15 @@ import {
   getEntitlement,
   openPortal,
   startCheckout,
-  type Entitlement,
+  type Plan,
 } from "@/lib/billing";
+import type { Entitlement } from "@/lib/billing";
 
 export default function AccountPage() {
   const { isAuthenticated, getAuthHeader, logout } = useAuth();
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingTier, setLoadingTier] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,34 +35,37 @@ export default function AccountPage() {
 
   const shownEntitlement = isAuthenticated ? entitlement : null;
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (priceId?: string, tierKey?: string) => {
     if (shownEntitlement?.subscribed) return;
-    setLoading(true);
+    setLoadingTier(tierKey ?? "default");
     setError(null);
     try {
       const authorization = await getAuthHeader();
-      const { url } = await startCheckout(authorization);
-      window.location.href = url;
+      const { url } = await startCheckout(authorization, priceId);
+      window.location.assign(url);
     } catch (actionError) {
       setError(billingErrorMessage(actionError));
-      setLoading(false);
+      setLoadingTier(null);
     }
   };
 
   const handlePortal = async () => {
-    setLoading(true);
+    setPortalLoading(true);
     setError(null);
     try {
       const authorization = await getAuthHeader();
       const { url } = await openPortal(authorization);
-      window.location.href = url;
+      window.location.assign(url);
     } catch (actionError) {
       setError(billingErrorMessage(actionError));
-      setLoading(false);
+      setPortalLoading(false);
     }
   };
 
   const subscribed = Boolean(entitlement?.subscribed);
+  const currentPlan = shownEntitlement?.plans.find(
+    (plan) => plan.tier === shownEntitlement.tier,
+  );
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -86,9 +91,9 @@ export default function AccountPage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-xl px-3 py-10 sm:px-4">
+      <main className="mx-auto w-full max-w-3xl px-3 py-10 sm:px-4">
         {!isAuthenticated ? (
-          <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-center">
+          <section className="mx-auto max-w-xl rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-center">
             <CreditCard className="mx-auto h-8 w-8 text-lime-400" />
             <h1 className="mt-3 text-lg font-semibold">Accedi per gestire l'abbonamento</h1>
             <p className="mt-2 text-sm text-slate-400">
@@ -123,11 +128,13 @@ export default function AccountPage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold">
-                        {subscribed ? "Abbonamento attivo" : "Abbonamento non attivo"}
+                        {subscribed
+                          ? `Abbonamento attivo${currentPlan ? ` — piano ${currentPlan.label}` : ""}`
+                          : "Abbonamento non attivo"}
                       </div>
                       <div className="mt-1 text-[12px] text-slate-400">
                         {subscribed
-                          ? "Campi e analisi disponibili senza limiti extra oltre il cap standard."
+                          ? "Campi e analisi disponibili nei limiti del tuo piano."
                           : "La creazione di campi e l'avvio di analisi richiedono un piano attivo."}
                       </div>
                     </div>
@@ -141,7 +148,7 @@ export default function AccountPage() {
                       {subscribed ? "ATTIVO" : "DISATTIVO"}
                     </span>
                   </div>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-[12px]">
+                  <dl className="mt-4 grid grid-cols-2 gap-3 text-[12px] sm:grid-cols-4">
                     <div>
                       <dt className="text-slate-500">Stato Stripe</dt>
                       <dd className="mt-0.5 font-medium text-slate-200">
@@ -160,40 +167,95 @@ export default function AccountPage() {
                       <dt className="text-slate-500">Campi per account</dt>
                       <dd className="mt-0.5 font-medium text-slate-200">{shownEntitlement.max_fields}</dd>
                     </div>
+                    <div>
+                      <dt className="text-slate-500">Limite ettari</dt>
+                      <dd className="mt-0.5 font-medium text-slate-200">
+                        {shownEntitlement.max_hectares === null
+                          ? "Illimitati"
+                          : `${shownEntitlement.max_hectares} ha (cumulativi)`}
+                      </dd>
+                    </div>
                   </dl>
                 </div>
 
-                <div className="mt-5 flex flex-wrap items-center gap-3">
-                  {subscribed ? (
+                {subscribed ? (
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
                     <Button
                       onClick={handlePortal}
-                      disabled={loading}
+                      disabled={portalLoading}
                       className="bg-lime-400 text-slate-950 hover:bg-lime-300"
                     >
-                      {loading ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
-                      {loading ? "Apertura…" : "Gestisci abbonamento"}
+                      {portalLoading ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
+                      {portalLoading ? "Apertura…" : "Gestisci abbonamento"}
                     </Button>
-                  ) : (
+                  </div>
+                ) : shownEntitlement.plans.length > 0 ? (
+                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    {shownEntitlement.plans.map((plan) => (
+                      <PlanCard
+                        key={plan.tier}
+                        plan={plan}
+                        loading={loadingTier === plan.tier}
+                        disabled={loadingTier !== null}
+                        onChoose={() => void handleCheckout(plan.price_id, plan.tier)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
                     <Button
-                      onClick={handleCheckout}
-                      disabled={loading}
+                      onClick={() => void handleCheckout()}
+                      disabled={loadingTier !== null}
                       className="bg-lime-400 text-slate-950 hover:bg-lime-300"
                     >
-                      {loading ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
-                      {loading ? "Reindirizzamento…" : "Abbonati ora"}
+                      {loadingTier !== null ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
+                      {loadingTier !== null ? "Reindirizzamento…" : "Abbonati ora"}
                     </Button>
-                  )}
-                  {error && (
-                    <p role="alert" className="border-l-2 border-rose-400 pl-3 text-sm text-rose-300">
-                      {error}
-                    </p>
-                  )}
-                </div>
+                  </div>
+                )}
               </>
             )}
           </section>
         )}
       </main>
+    </div>
+  );
+}
+
+function PlanCard({
+  plan,
+  loading,
+  disabled,
+  onChoose,
+}: {
+  plan: Plan;
+  loading: boolean;
+  disabled: boolean;
+  onChoose: () => void;
+}) {
+  return (
+    <div className="flex flex-col rounded-lg border border-slate-800 bg-slate-950 p-4">
+      <div className="text-sm font-semibold">{plan.label}</div>
+      <div className="mt-1 text-xl font-bold text-lime-400">
+        {plan.amount_eur_month.toLocaleString("it-IT", {
+          style: "currency",
+          currency: "EUR",
+        })}
+        <span className="text-[11px] font-normal text-slate-400">/mese</span>
+      </div>
+      <div className="mt-1 text-[12px] text-slate-400">
+        {plan.max_hectares === null
+          ? "Ettari illimitati"
+          : `Fino a ${plan.max_hectares} ha complessivi`}
+      </div>
+      <Button
+        onClick={onChoose}
+        disabled={disabled}
+        className="mt-4 bg-lime-400 text-slate-950 hover:bg-lime-300"
+      >
+        {loading ? <LoaderCircle className="animate-spin" /> : null}
+        {loading ? "Reindirizzamento…" : "Scegli"}
+      </Button>
     </div>
   );
 }
