@@ -1,9 +1,11 @@
 """Entitlements di billing: unica fonte per "questo utente puo' usare X?".
 
 `subscribed = True` per status Stripe in trialing/active, con bypass esplicito
-per staff/superuser (operativita' interna, non clienti paganti). I tier di
-abbonamento mappano il price Stripe a un limite ettari CUMULATIVO calcolato
-sui boundary correnti dei campi vivi dell'utente (ultima versione per campo).
+per staff/superuser (operativita' interna, non clienti paganti) e per gli
+utenti con `complimentary_access` (accesso omaggio, status/tier "comp"). I
+tier di abbonamento mappano il price Stripe a un limite ettari CUMULATIVO
+calcolato sui boundary correnti dei campi vivi dell'utente (ultima versione
+per campo).
 """
 
 from decimal import Decimal
@@ -54,6 +56,16 @@ def get_entitlements(user: User) -> dict[str, object]:
             "current_period_end": None,
             "max_fields": settings.MAX_FIELDS_PER_ACCOUNT,
             "tier": "staff",
+            "max_hectares": None,
+            "plans": available_plans(),
+        }
+    if user.complimentary_access:
+        return {
+            "subscribed": True,
+            "status": "comp",
+            "current_period_end": None,
+            "max_fields": settings.MAX_FIELDS_PER_ACCOUNT,
+            "tier": "comp",
             "max_hectares": None,
             "plans": available_plans(),
         }

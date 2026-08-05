@@ -8,7 +8,7 @@ from backend.accounts.models import User
 class VerdimetriaUserAdmin(UserAdmin):
     model = User
     ordering = ("email",)
-    list_display = ("email", "first_name", "last_name", "is_staff", "is_active")
+    list_display = ("email", "first_name", "last_name", "is_staff", "is_active", "complimentary_access")
     search_fields = ("email", "first_name", "last_name")
     fieldsets = (
         (None, {"fields": ("email", "password")}),
@@ -20,6 +20,7 @@ class VerdimetriaUserAdmin(UserAdmin):
                     "is_active",
                     "is_staff",
                     "is_superuser",
+                    "complimentary_access",
                     "groups",
                     "user_permissions",
                 )

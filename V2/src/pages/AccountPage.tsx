@@ -63,6 +63,9 @@ export default function AccountPage() {
   };
 
   const subscribed = Boolean(entitlement?.subscribed);
+  const isComp = shownEntitlement?.tier === "comp";
+  // L'accesso omaggio non ha un customer Stripe: il customer portal fallirebbe.
+  const canOpenPortal = subscribed && shownEntitlement?.status !== "comp";
   const currentPlan = shownEntitlement?.plans.find(
     (plan) => plan.tier === shownEntitlement.tier,
   );
@@ -129,7 +132,9 @@ export default function AccountPage() {
                     <div>
                       <div className="text-sm font-semibold">
                         {subscribed
-                          ? `Abbonamento attivo${currentPlan ? ` — piano ${currentPlan.label}` : ""}`
+                          ? isComp
+                            ? "Abbonamento attivo — accesso omaggio"
+                            : `Abbonamento attivo${currentPlan ? ` — piano ${currentPlan.label}` : ""}`
                           : "Abbonamento non attivo"}
                       </div>
                       <div className="mt-1 text-[12px] text-slate-400">
@@ -179,16 +184,18 @@ export default function AccountPage() {
                 </div>
 
                 {subscribed ? (
-                  <div className="mt-5 flex flex-wrap items-center gap-3">
-                    <Button
-                      onClick={handlePortal}
-                      disabled={portalLoading}
-                      className="bg-lime-400 text-slate-950 hover:bg-lime-300"
-                    >
-                      {portalLoading ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
-                      {portalLoading ? "Apertura…" : "Gestisci abbonamento"}
-                    </Button>
-                  </div>
+                  canOpenPortal ? (
+                    <div className="mt-5 flex flex-wrap items-center gap-3">
+                      <Button
+                        onClick={handlePortal}
+                        disabled={portalLoading}
+                        className="bg-lime-400 text-slate-950 hover:bg-lime-300"
+                      >
+                        {portalLoading ? <LoaderCircle className="animate-spin" /> : <CreditCard />}
+                        {portalLoading ? "Apertura…" : "Gestisci abbonamento"}
+                      </Button>
+                    </div>
+                  ) : null
                 ) : shownEntitlement.plans.length > 0 ? (
                   <div className="mt-5 grid gap-3 sm:grid-cols-3">
                     {shownEntitlement.plans.map((plan) => (

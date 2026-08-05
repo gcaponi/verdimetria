@@ -17,6 +17,7 @@ from rest_framework.test import APIClient
 
 from backend.accounts.models import User
 from backend.billing.models import Subscription
+from backend.billing.services import BillingGateError, enforce_hectare_quota, get_entitlements
 from backend.fields.models import Field
 
 FIELD_POLYGON: dict[str, Any] = {
@@ -392,3 +393,37 @@ def test_webhook_reads_data_from_raw_body_not_sdk_object(
 
     assert response.status_code == 200
     assert Subscription.objects.get(user=user).status == "active"
+
+
+@pytest.mark.django_db
+def test_complimentary_access_grants_entitlements(user: User) -> None:
+    """Accesso omaggio: entitlement comp senza abbonamento Stripe."""
+    user.complimentary_access = True
+    user.save(update_fields=("complimentary_access",))
+
+    entitlements = get_entitlements(user)
+
+    assert entitlements["subscribed"] is True
+    assert entitlements["status"] == "comp"
+    assert entitlements["tier"] == "comp"
+    assert entitlements["max_hectares"] is None
+
+
+@pytest.mark.django_db
+def test_complimentary_access_skips_hectare_quota(user: User) -> None:
+    """Il tier comp non ha limite ettari: quota mai superata."""
+    user.complimentary_access = True
+    user.save(update_fields=("complimentary_access",))
+
+    enforce_hectare_quota(user, 999999)
+
+
+@pytest.mark.django_db
+def test_user_without_flags_still_blocked_by_paywall(user: User) -> None:
+    """Regressione: utente senza flag e senza abbonamento resta fuori."""
+    entitlements = get_entitlements(user)
+
+    assert entitlements["subscribed"] is False
+    assert entitlements["status"] == ""
+    with pytest.raises(BillingGateError):
+        enforce_hectare_quota(user, 1)

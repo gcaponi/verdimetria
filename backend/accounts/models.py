@@ -31,6 +31,10 @@ class UserManager(BaseUserManager["User"]):
 class User(AbstractUser):
     username = None
     email = models.EmailField(unique=True)
+    complimentary_access = models.BooleanField(
+        default=False,
+        help_text="Accesso omaggio: l'utente puo' usare il sistema senza abbonamento Stripe",
+    )
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS: list[str] = []
