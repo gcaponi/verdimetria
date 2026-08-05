@@ -326,3 +326,44 @@ def test_webhook_subscription_created_out_of_order_links_via_customer_metadata(
     assert subscription.plan_id == "price_basic"
     assert subscription.stripe_subscription_id == "sub_ooo"
     assert subscription.stripe_customer_id == "cus_ooo"
+
+
+@pytest.mark.django_db
+def test_webhook_reads_period_end_from_items_basil_shape(
+    api_client: APIClient, user: User, tiers: Any
+) -> None:
+    """API Stripe basil: current_period_end vive in items.data[], non nella
+    root della Subscription. Il webhook deve leggerlo da li'."""
+    activate(user)
+    event = {
+        "id": "evt_basil",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_test",
+                "customer": "cus_test",
+                "status": "active",
+                "cancel_at_period_end": False,
+                "items": {
+                    "data": [{
+                        "price": {"id": "price_pro"},
+                        "current_period_end": PERIOD_END,
+                    }]
+                },
+            }
+        },
+    }
+    with patch("backend.billing.views.stripe.Webhook.construct_event", return_value=event):
+        response = api_client.post(
+            "/api/v1/billing/webhook/",
+            data="{}",
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="t=1,v1=fake",
+        )
+
+    assert response.status_code == 200
+    subscription = Subscription.objects.get(user=user)
+    assert subscription.plan_id == "price_pro"
+    assert subscription.current_period_end == datetime.fromtimestamp(
+        PERIOD_END, tz=timezone.utc
+    )

@@ -183,6 +183,10 @@ def _handle_subscription_event(subscription_object: dict[str, Any]) -> None:
     items = (subscription_object.get("items") or {}).get("data") or []
     if items and items[0].get("price"):
         plan_id = (items[0]["price"].get("id") or "")
+    if period_end is None and items:
+        # API Stripe "basil": current_period_end e' stato spostato dalla root
+        # della Subscription dentro items.data[].
+        period_end = items[0].get("current_period_end")
 
     subscription.stripe_subscription_id = subscription_id
     subscription.status = subscription_object.get("status") or ""
