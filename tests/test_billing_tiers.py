@@ -281,3 +281,48 @@ def test_billing_app_ready_sets_stripe_api_key(settings: Any) -> None:
     settings.STRIPE_SECRET_KEY = "sk_test_regression"
     apps.get_app_config("billing").ready()
     assert stripe_lib.api_key == "sk_test_regression"
+
+
+@pytest.mark.django_db
+def test_webhook_subscription_created_out_of_order_links_via_customer_metadata(
+    api_client: APIClient, user: User, tiers: Any
+) -> None:
+    """Regressione 2026-08-05 (bug E2E reale): Stripe NON garantisce l'ordine
+    di consegna. subscription.created puo' arrivare prima di
+    checkout.session.completed, quando la riga locale non esiste ancora:
+    il handler deve risalire all'utente dai metadata del customer."""
+    event = {
+        "id": "evt_ooo",
+        "type": "customer.subscription.created",
+        "data": {
+            "object": {
+                "id": "sub_ooo",
+                "customer": "cus_ooo",
+                "status": "active",
+                "cancel_at_period_end": False,
+                "current_period_end": PERIOD_END,
+                "items": {"data": [{"price": {"id": "price_basic"}}]},
+            }
+        },
+    }
+    with (
+        patch("backend.billing.views.stripe.Webhook.construct_event", return_value=event),
+        patch(
+            "backend.billing.views.stripe.Customer.retrieve",
+            return_value=SimpleNamespace(metadata={"user_id": str(user.pk)}),
+        ) as retrieve,
+    ):
+        response = api_client.post(
+            "/api/v1/billing/webhook/",
+            data="{}",
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="t=1,v1=fake",
+        )
+
+    assert response.status_code == 200
+    retrieve.assert_called_once_with("cus_ooo")
+    subscription = Subscription.objects.get(user=user)
+    assert subscription.status == "active"
+    assert subscription.plan_id == "price_basic"
+    assert subscription.stripe_subscription_id == "sub_ooo"
+    assert subscription.stripe_customer_id == "cus_ooo"

@@ -162,9 +162,21 @@ def _handle_subscription_event(subscription_object: dict[str, Any]) -> None:
             stripe_subscription_id=subscription_id
         ).first()
     if subscription is None:
-        # Subscription mai collegata a un nostro utente (es. checkout non nostro):
-        # senza utente non possiamo assegnarla, l'evento resta comunque deduplicato.
-        return
+        # Stripe NON garantisce l'ordine di consegna: subscription.created puo'
+        # arrivare prima di checkout.session.completed, quando la riga locale
+        # non esiste ancora. Risalgo all'utente dai metadata del customer
+        # (impostati da CheckoutView alla creazione).
+        user_id = _user_id_from_customer_metadata(customer_id)
+        if not user_id:
+            return
+        try:
+            user = User.objects.get(pk=user_id)
+        except (User.DoesNotExist, ValueError):
+            return
+        subscription, _ = Subscription.objects.update_or_create(
+            user=user,
+            defaults={"stripe_customer_id": customer_id},
+        )
 
     period_end = subscription_object.get("current_period_end")
     plan_id = ""
@@ -191,6 +203,21 @@ def _handle_subscription_event(subscription_object: dict[str, Any]) -> None:
             "updated_at",
         )
     )
+
+
+def _user_id_from_customer_metadata(customer_id: str) -> str | None:
+    """user_id dai metadata del customer Stripe (fallback per consegne fuori ordine)."""
+    if not customer_id:
+        return None
+    try:
+        customer = stripe.Customer.retrieve(customer_id)
+    except stripe.error.StripeError:
+        return None
+    metadata = getattr(customer, "metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return None
+    user_id = metadata.get("user_id")
+    return str(user_id) if user_id else None
 
 
 def _handle_invoice_payment_failed(invoice: dict[str, Any]) -> None:
