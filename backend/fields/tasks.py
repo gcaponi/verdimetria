@@ -14,7 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 from requests.exceptions import RequestException, Timeout
 
-from backend.fields.insights import generate_insights
+from backend.fields.insights import compute_ai_cost_eur, generate_insights
 from backend.fields.models import AnalysisJob, Field
 from backend.fields.pipeline import (
     build_field_analysis,
@@ -137,7 +137,7 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
     land_cover = _compute_land_cover_if_configured(area)
 
     _set_progress(job, "ai")
-    ai = generate_insights({
+    ai, ai_usage = generate_insights({
         "areaHectares": float(boundary.area_hectares),
         "startDate": params["start_date"],
         "endDate": params["end_date"],
@@ -150,6 +150,13 @@ def _execute(job: AnalysisJob) -> dict[str, Any]:
         "crop": job.field.crop,
         "interventions": _serialize_interventions(field),
     })
+    if ai_usage:
+        # DeepSeek ha risposto: traccia token e costo stimato sul job.
+        job.ai_tokens_in = ai_usage["tokens_in"]
+        job.ai_tokens_out = ai_usage["tokens_out"]
+        job.ai_cost_eur = compute_ai_cost_eur(
+            ai_usage["tokens_in"], ai_usage["tokens_out"], ai_usage["model"]
+        )
 
     return build_field_analysis(
         analysis_id=job.pk.hex[:16],
@@ -216,4 +223,13 @@ def run_analysis_job(self: Any, job_id: str) -> None:
     job.result = result
     job.error = ""
     job.completed_at = timezone.now()
-    job.save(update_fields=("status", "progress_step", "result", "error", "completed_at"))
+    job.save(update_fields=(
+        "status",
+        "progress_step",
+        "result",
+        "error",
+        "completed_at",
+        "ai_tokens_in",
+        "ai_tokens_out",
+        "ai_cost_eur",
+    ))

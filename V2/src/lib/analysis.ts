@@ -2,7 +2,7 @@ import { getApiBaseUrl } from "@/lib/auth";
 import { FieldsApiError } from "@/lib/fields";
 import type { MapArea, NdmiBlock, VariabilityBlock } from "@/types";
 
-export type AnalysisStatus = "loading" | "ready" | "error";
+export type AnalysisStatus = "loading" | "ready" | "error" | "empty";
 
 export interface NdviPoint {
   date: string;
@@ -96,8 +96,33 @@ interface AnalysisJob {
   error: string;
 }
 
+/** Serialized job from GET /api/v1/fields/{id}/jobs/ (history, ordered -created_at). */
+export interface FieldJob {
+  id: string;
+  status: JobStatus;
+  progress_step?: string;
+  result: FieldAnalysis | null;
+  error?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
+  params?: { end_date?: string | null } | null;
+  ai_tokens_in?: number | null;
+  ai_tokens_out?: number | null;
+  ai_cost_eur?: string | null;
+}
+
 const POLL_INTERVAL_MS = 3_000;
 const POLL_TIMEOUT_MS = 5 * 60_000;
+
+/** Latest completed job with a result for the field, or null if none exists yet. */
+export async function fetchLatestCompletedJob(
+  areaId: string,
+  authorization: string,
+  signal?: AbortSignal,
+): Promise<FieldJob | null> {
+  const jobs = await jobRequest<FieldJob[]>(`/api/v1/fields/${areaId}/jobs/`, authorization, { signal });
+  return jobs.find((job) => job.status === "completed" && job.result != null) ?? null;
+}
 
 export async function analyzeArea(
   area: MapArea,

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import {
   AlertCircle,
   CalendarDays,
@@ -19,8 +20,8 @@ import WeatherSection from "@/sections/WeatherSection";
 import VegetationCharts from "@/sections/VegetationCharts";
 import RealInsightsSection from "@/sections/RealInsightsSection";
 import InterventionsSection from "@/sections/InterventionsSection";
-import { analyzeArea } from "@/lib/analysis";
-import type { AnalysisStatus, FieldAnalysis } from "@/lib/analysis";
+import { analyzeArea, fetchLatestCompletedJob } from "@/lib/analysis";
+import type { AnalysisStatus, FieldAnalysis, FieldJob } from "@/lib/analysis";
 import { getApiBaseUrl } from "@/lib/auth";
 import { FieldsApiError } from "@/lib/fields";
 import { useAuth } from "@/hooks/useAuth";
@@ -64,13 +65,25 @@ export default function AnalysisWorkspace({
     analysis: FieldAnalysis | null;
     status: AnalysisStatus;
     error: string | null;
-  }>({ key: requestKey, analysis: null, status: "loading", error: null });
+    job: FieldJob | null;
+  }>({ key: requestKey, analysis: null, status: "loading", error: null, job: null });
   const currentState = analysisState.key === requestKey
     ? analysisState
-    : { key: requestKey, analysis: null, status: "loading" as const, error: null };
+    : { key: requestKey, analysis: null, status: "loading" as const, error: null, job: null };
   const analysis = precomputedAnalysis ?? currentState.analysis;
   const analysisStatus: AnalysisStatus = precomputedAnalysis ? "ready" : currentState.status;
   const analysisError = precomputedAnalysis ? null : currentState.error;
+  const currentJob = precomputedAnalysis ? null : currentState.job;
+  const [refresh, setRefresh] = useState<{
+    key: string;
+    busy: boolean;
+    error: string | null;
+    paywalled: boolean;
+  }>({ key: requestKey, busy: false, error: null, paywalled: false });
+  const refreshState = refresh.key === requestKey
+    ? refresh
+    : { key: requestKey, busy: false, error: null, paywalled: false };
+  const refreshAbortRef = useRef<AbortController | null>(null);
   const [reportJob, setReportJob] = useState<{ key: string; jobId: string | null }>({
     key: requestKey,
     jobId: null,
@@ -79,13 +92,18 @@ export default function AnalysisWorkspace({
   const [reportBusy, setReportBusy] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
+  // On open, load the latest completed analysis instead of starting a new job.
   useEffect(() => {
     if (precomputedAnalysis) return;
     const controller = new AbortController();
     getAuthHeader()
-      .then((authorization) => analyzeArea(area, authorization, controller.signal))
-      .then((result) => {
-        setAnalysisState({ key: requestKey, analysis: result, status: "ready", error: null });
+      .then((authorization) => fetchLatestCompletedJob(area.id, authorization, controller.signal))
+      .then((job) => {
+        if (job?.result) {
+          setAnalysisState({ key: requestKey, analysis: job.result, status: "ready", error: null, job });
+        } else {
+          setAnalysisState({ key: requestKey, analysis: null, status: "empty", error: null, job: null });
+        }
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -95,10 +113,56 @@ export default function AnalysisWorkspace({
           analysis: null,
           status: "error",
           error: error instanceof Error ? error.message : "Analisi non disponibile",
+          job: null,
         });
       });
     return () => controller.abort();
   }, [area, requestKey, getAuthHeader, logout, precomputedAnalysis]);
+
+  // Abort a running refresh when the area changes or the workspace unmounts.
+  useEffect(() => () => refreshAbortRef.current?.abort(), [requestKey]);
+
+  // Manual refresh: start a new analysis job; old data stays visible meanwhile.
+  const startAnalysis = () => {
+    if (precomputedAnalysis || refreshState.busy) return;
+    refreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    refreshAbortRef.current = controller;
+    setRefresh({ key: requestKey, busy: true, error: null, paywalled: false });
+    getAuthHeader()
+      .then(async (authorization) => {
+        await analyzeArea(area, authorization, controller.signal);
+        return fetchLatestCompletedJob(area.id, authorization, controller.signal);
+      })
+      .then((job) => {
+        if (job?.result) {
+          setAnalysisState({ key: requestKey, analysis: job.result, status: "ready", error: null, job });
+          setRefresh({ key: requestKey, busy: false, error: null, paywalled: false });
+        } else {
+          setRefresh({
+            key: requestKey,
+            busy: false,
+            error: "Analisi completata ma non trovata nello storico: ricarica la pagina",
+            paywalled: false,
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (error instanceof FieldsApiError && error.status === 401) logout();
+        const paywalled = error instanceof FieldsApiError && error.status === 402;
+        setRefresh({
+          key: requestKey,
+          busy: false,
+          error: paywalled
+            ? "Serve un abbonamento attivo per avviare una nuova analisi."
+            : error instanceof Error
+              ? error.message
+              : "Aggiornamento non riuscito",
+          paywalled,
+        });
+      });
+  };
 
   // Resolve the full job id for the PDF report: analysisId is job.pk.hex[:16],
   // so match it against the dashed uuids of the field's job history.
@@ -158,6 +222,10 @@ export default function AnalysisWorkspace({
       .finally(() => setReportBusy(false));
   };
 
+  const endDate = currentJob?.params?.end_date ?? analysis?.period.to ?? null;
+  const completedAt = currentJob?.completed_at ?? null;
+  const costLabel = formatCostEur(currentJob?.ai_cost_eur);
+
   return (
     <section className="border-y border-slate-800">
       <nav
@@ -197,6 +265,11 @@ export default function AnalysisWorkspace({
           reportBusy={reportBusy}
           reportError={reportError}
           onDownloadReport={downloadReport}
+          endDate={endDate}
+          completedAt={completedAt}
+          costLabel={costLabel}
+          refreshing={refreshState.busy}
+          refreshError={refreshState.error}
         />
         {activeTab === "overview" && <Overview area={area} analysis={analysis} status={analysisStatus} />}
         {activeTab === "soil" && (
@@ -215,6 +288,8 @@ export default function AnalysisWorkspace({
             status={analysisStatus}
             error={analysisError}
             onRetry={() => setRequestVersion((version) => version + 1)}
+            onRefresh={precomputedAnalysis ? undefined : startAnalysis}
+            refreshing={refreshState.busy}
           />
         )}
         {activeTab === "geology" && (
@@ -230,6 +305,13 @@ export default function AnalysisWorkspace({
             status={analysisStatus}
             error={analysisError}
             onRetry={() => setRequestVersion((version) => version + 1)}
+            onRefresh={precomputedAnalysis ? undefined : startAnalysis}
+            refreshing={refreshState.busy}
+            refreshError={refreshState.error}
+            refreshPaywalled={refreshState.paywalled}
+            endDate={endDate}
+            completedAt={completedAt}
+            costLabel={costLabel}
           />
         )}
         {activeTab === "interventions" && !precomputedAnalysis && (
@@ -388,6 +470,8 @@ function VegetationAnalysis({
   status,
   error,
   onRetry,
+  onRefresh,
+  refreshing,
 }: Omit<Props, "area"> & AnalysisResultProps) {
   const vegetationIds = new Set(["NDVI", "EVI", "SAVI", "NDWI", "AGRICULTURE"]);
   const vegetationLayers = layers.filter((layer) => vegetationIds.has(layer.id));
@@ -403,7 +487,14 @@ function VegetationAnalysis({
         activeLayerId={activeLayerId}
         onLayerChange={onLayerChange}
       />
-      <AnalysisResult status={status} analysis={analysis} error={error} onRetry={onRetry}>
+      <AnalysisResult
+        status={status}
+        analysis={analysis}
+        error={error}
+        onRetry={onRetry}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
+      >
         {(result) => (
           <>
             <VegetationCharts analysis={result} />
@@ -451,7 +542,25 @@ function GeologyAnalysis({
   );
 }
 
-function InsightsAnalysis({ analysis, status, error, onRetry }: AnalysisResultProps) {
+function InsightsAnalysis({
+  analysis,
+  status,
+  error,
+  onRetry,
+  onRefresh,
+  refreshing,
+  refreshError,
+  refreshPaywalled,
+  endDate,
+  completedAt,
+  costLabel,
+}: AnalysisResultProps & {
+  refreshError?: string | null;
+  refreshPaywalled?: boolean;
+  endDate: string | null;
+  completedAt: string | null;
+  costLabel: string | null;
+}) {
   return (
     <div className="space-y-5">
       <SectionHeading
@@ -459,7 +568,57 @@ function InsightsAnalysis({ analysis, status, error, onRetry }: AnalysisResultPr
         title="AI Insights"
         detail="Il modello riceve solo statistiche CDSE aggregate e deve citare le evidenze usate."
       />
-      <AnalysisResult status={status} analysis={analysis} error={error} onRetry={onRetry}>
+      {onRefresh && (
+        <div className="border border-cyan-400/25 bg-cyan-400/5 px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-[11px] leading-relaxed text-slate-400">
+              {analysis ? (
+                <>
+                  Dati al <span className="font-semibold text-slate-200">{formatDate(endDate ?? analysis.period.to)}</span>
+                  {completedAt && <> · aggiornato {formatDateTime(completedAt)}</>}
+                  {costLabel && (
+                    <>
+                      {" "}· Costo aggiornamento: <span className="font-semibold text-cyan-300">€ {costLabel}</span>
+                    </>
+                  )}
+                </>
+              ) : (
+                "Nessuna analisi ancora eseguita su questo campo: avvia la prima per generare statistiche e AI Insights."
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing}
+              className="flex shrink-0 items-center gap-1.5 rounded-md bg-cyan-500 px-4 py-2 text-[12px] font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+              {refreshing ? "Aggiornamento in corso…" : analysis ? "Aggiorna analisi" : "Avvia analisi"}
+            </button>
+          </div>
+          {refreshError && !refreshing && (
+            <p className="mt-3 border-t border-cyan-400/15 pt-3 text-[11px] text-rose-300">
+              {refreshError}
+              {refreshPaywalled && (
+                <>
+                  {" "}
+                  <Link to="/account" className="font-semibold text-cyan-300 underline underline-offset-2 hover:text-cyan-200">
+                    Vai al tuo account per attivare l'abbonamento
+                  </Link>
+                </>
+              )}
+            </p>
+          )}
+        </div>
+      )}
+      <AnalysisResult
+        status={status}
+        analysis={analysis}
+        error={error}
+        onRetry={onRetry}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
+      >
         {(result) => <RealInsightsSection analysis={result} />}
       </AnalysisResult>
     </div>
@@ -471,6 +630,8 @@ interface AnalysisResultProps {
   status: AnalysisStatus;
   error: string | null;
   onRetry: () => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
 function AnalysisRunStatus({
@@ -482,11 +643,21 @@ function AnalysisRunStatus({
   reportBusy,
   reportError,
   onDownloadReport,
+  endDate,
+  completedAt,
+  costLabel,
+  refreshing,
+  refreshError,
 }: AnalysisResultProps & {
   reportJobId: string | null;
   reportBusy: boolean;
   reportError: string | null;
   onDownloadReport: () => void;
+  endDate: string | null;
+  completedAt: string | null;
+  costLabel: string | null;
+  refreshing: boolean;
+  refreshError: string | null;
 }) {
   return (
     <div className="mb-5 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-slate-800 bg-slate-900/50 px-4 py-3 text-[11px]">
@@ -495,18 +666,37 @@ function AnalysisRunStatus({
           <RefreshCw className="h-4 w-4 animate-spin text-cyan-300" />
         ) : status === "ready" ? (
           <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+        ) : status === "empty" ? (
+          <Sparkles className="h-4 w-4 text-cyan-300" />
         ) : (
           <AlertCircle className="h-4 w-4 text-rose-300" />
         )}
         <span className="text-slate-300">
           {status === "loading"
-            ? "Analisi reale in corso: Catalog + Statistical + AI"
+            ? "Caricamento ultima analisi…"
             : status === "ready" && analysis
               ? `${analysis.vegetation.validObservations} intervalli validi · ${analysis.catalog.sceneCount} scene · ${analysis.ai.status === "generated" ? "AI generata" : "fallback trasparente"}`
-              : error ?? "Analisi non disponibile"}
+              : status === "empty"
+                ? "Nessuna analisi eseguita su questo campo"
+                : error ?? "Analisi non disponibile"}
         </span>
+        {status === "ready" && analysis && endDate && (
+          <span className="text-slate-500">
+            · Dati al {formatDate(endDate)}
+            {completedAt && <> · aggiornato {formatDateTime(completedAt)}</>}
+            {costLabel && <> · costo € {costLabel}</>}
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2">
+        {refreshing && (
+          <span className="flex items-center gap-1.5 text-cyan-300">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Aggiornamento in corso…
+          </span>
+        )}
+        {refreshError && !refreshing && (
+          <span className="text-rose-300">{refreshError}</span>
+        )}
         {reportError && status === "ready" && (
           <span className="text-rose-300">{reportError}</span>
         )}
@@ -535,6 +725,8 @@ function AnalysisResult({
   analysis,
   error,
   onRetry,
+  onRefresh,
+  refreshing,
   children,
 }: AnalysisResultProps & { children: (analysis: FieldAnalysis) => React.ReactNode }) {
   if (status === "ready" && analysis) return children(analysis);
@@ -551,12 +743,36 @@ function AnalysisResult({
       </div>
     );
   }
+  if (status === "empty") {
+    return (
+      <div className="flex min-h-40 flex-wrap items-center justify-between gap-4 border border-dashed border-cyan-400/30 bg-cyan-400/5 p-5">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">Nessuna analisi disponibile</h3>
+          <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-slate-500">
+            Questo campo non ha ancora un'analisi completata. Avviala per ottenere statistiche
+            satellitari, serie NDVI e interpretazione AI.
+          </p>
+        </div>
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            className="flex shrink-0 items-center gap-1.5 rounded-md bg-cyan-500 px-4 py-2 text-[12px] font-semibold text-slate-950 transition-colors hover:bg-cyan-400 disabled:opacity-60"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+            {refreshing ? "Analisi in corso…" : "Avvia analisi"}
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-40 items-center gap-4 border border-dashed border-cyan-400/30 bg-cyan-400/5 p-5">
       <RefreshCw className="h-5 w-5 animate-spin text-cyan-300" />
       <div>
-        <h3 className="text-sm font-semibold text-slate-200">Elaborazione del Polygon</h3>
-        <p className="mt-1 text-[12px] text-slate-500">Ricerca scene, statistiche NDVI e interpretazione AI in corso.</p>
+        <h3 className="text-sm font-semibold text-slate-200">Caricamento analisi</h3>
+        <p className="mt-1 text-[12px] text-slate-500">Recupero dell'ultima analisi completata per questo campo.</p>
       </div>
     </div>
   );
@@ -739,4 +955,22 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short", year: "numeric" }).format(
     new Date(`${value}T00:00:00Z`),
   );
+}
+
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+/** "0.002310" -> "0,0023"; null when missing or zero (old jobs / fallback). */
+function formatCostEur(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount.toLocaleString("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 }

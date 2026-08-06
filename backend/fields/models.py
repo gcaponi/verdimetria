@@ -177,6 +177,11 @@ class AnalysisJob(models.Model):
     error = models.TextField(blank=True, default="")
     celery_task_id = models.CharField(max_length=64, blank=True, default="")
     attempts = models.PositiveIntegerField(default=0)
+    # Telemetria costo AI: valorizzata solo se DeepSeek ha risposto con
+    # output valido; il fallback rule-based lascia i valori di default.
+    ai_tokens_in = models.PositiveIntegerField(default=0)
+    ai_tokens_out = models.PositiveIntegerField(default=0)
+    ai_cost_eur = models.DecimalField(max_digits=10, decimal_places=6, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

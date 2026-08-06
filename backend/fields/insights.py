@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from decimal import Decimal
 from typing import Any
 
 import requests
@@ -21,6 +22,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
 AI_TIMEOUT_SECONDS = 25
+
+# Prezzi DeepSeek in EUR per 1M token, coppia (input, output).
+# Fonte: listino DeepSeek fornito dal progetto (2026-08); modelli non
+# presenti ricadono sul prezzo di DEFAULT_DEEPSEEK_MODEL con un warning.
+AI_PRICING_EUR_PER_MILLION = {
+    "deepseek-v4-pro": (Decimal("2.24"), Decimal("2.24")),
+    "deepseek-v4-flash": (Decimal("0.14"), Decimal("0.28")),
+}
 
 MAX_AI_INSIGHTS = 6
 
@@ -336,6 +345,35 @@ def _extract_ai_content(payload: Any) -> str | None:
     return content if isinstance(content, str) else None
 
 
+def _extract_ai_usage(payload: Any, model: str) -> dict[str, Any]:
+    """Usage token dalla risposta DeepSeek; zeri se il blocco `usage` manca."""
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        return {"tokens_in": 0, "tokens_out": 0, "model": model}
+    return {
+        "tokens_in": int(usage.get("prompt_tokens") or 0),
+        "tokens_out": int(usage.get("completion_tokens") or 0),
+        "model": model,
+    }
+
+
+def compute_ai_cost_eur(tokens_in: int, tokens_out: int, model: str) -> Decimal:
+    """Costo stimato della chiamata AI in EUR, quantizzato a 6 decimali."""
+    pricing = AI_PRICING_EUR_PER_MILLION.get(model)
+    if pricing is None:
+        logger.warning(
+            "ai_pricing_unknown_model: %s (uso il prezzo di %s)",
+            model,
+            DEFAULT_DEEPSEEK_MODEL,
+        )
+        pricing = AI_PRICING_EUR_PER_MILLION[DEFAULT_DEEPSEEK_MODEL]
+    price_in, price_out = pricing
+    cost = (
+        Decimal(tokens_in) * price_in + Decimal(tokens_out) * price_out
+    ) / Decimal(1_000_000)
+    return cost.quantize(Decimal("0.000001"))
+
+
 def _fallback_result(insights: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "provider": "Verdimetria rules",
@@ -446,12 +484,19 @@ def _build_model_input(metrics: dict[str, Any]) -> dict[str, Any]:
     return model_input
 
 
-def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Genera il blocco `ai` del contratto FieldAnalysis. Mai eccezioni."""
+def generate_insights(
+    metrics: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Genera il blocco `ai` del contratto FieldAnalysis. Mai eccezioni.
+
+    Ritorna (blocco_ai, usage): usage e' {"tokens_in", "tokens_out", "model"}
+    solo se DeepSeek ha risposto con output valido, None per il fallback
+    rule-based (chiave assente, errore HTTP o output non strutturato).
+    """
     fallback = _fallback_result(rule_based_insights(metrics))
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
-        return fallback
+        return fallback, None
 
     model = deepseek_model()
     model_input = _build_model_input(metrics)
@@ -477,7 +522,8 @@ def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
         )
         if not response.ok:
             raise ValueError(f"DeepSeek HTTP {response.status_code}")
-        content = _extract_ai_content(response.json())
+        payload = response.json()
+        content = _extract_ai_content(payload)
         parsed = parse_ai_content(content) if content else None
         if parsed is None:
             raise ValueError("Output AI non strutturato")
@@ -487,7 +533,7 @@ def generate_insights(metrics: dict[str, Any]) -> dict[str, Any]:
             "status": "generated",
             "summary": parsed["summary"],
             "insights": parsed["insights"],
-        }
+        }, _extract_ai_usage(payload, model)
     except Exception as error:
         logger.warning("ai_fallback: %s", error)
-        return fallback
+        return fallback, None
