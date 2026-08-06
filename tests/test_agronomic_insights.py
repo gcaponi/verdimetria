@@ -192,7 +192,7 @@ def test_generated_output_keeps_unchanged_schema(monkeypatch: pytest.MonkeyPatch
 
     result, usage = generate_insights(_metrics())
 
-    assert set(result) == {"provider", "model", "status", "summary", "insights"}
+    assert set(result) == {"status", "summary", "insights"}
     assert result["status"] == "generated"
     assert isinstance(result["summary"], str)
     assert result["insights"]
@@ -229,7 +229,7 @@ def test_fallback_produces_actionable_agronomic_insights(
 
     assert result["status"] == "fallback"
     assert usage is None  # chiave assente: nessuna chiamata, nessun costo
-    assert set(result) == {"provider", "model", "status", "summary", "insights"}
+    assert set(result) == {"status", "summary", "insights"}
     titles = [insight["title"] for insight in result["insights"]]
     assert any(title.startswith("Diagnosi:") for title in titles)
     assert any(title.startswith("Da verificare:") for title in titles)
@@ -444,8 +444,6 @@ TERRAIN_RESULT: dict[str, Any] = {
 }
 
 AI_RESULT: dict[str, Any] = {
-    "provider": "Verdimetria rules",
-    "model": "evidence-rules-v1",
     "status": "fallback",
     "summary": "Sintesi di test",
     "insights": [],

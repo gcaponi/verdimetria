@@ -121,8 +121,6 @@ CATALOG_ITEMS = [
 ]
 
 AI_RESULT: dict[str, Any] = {
-    "provider": "Verdimetria rules",
-    "model": "evidence-rules-v1",
     "status": "fallback",
     "summary": "Sintesi di test",
     "insights": [],
@@ -428,12 +426,12 @@ def test_task_records_ai_usage_and_cost(
     assert job.ai_tokens_out == 500
     # (1000 + 500) token * 2.24 EUR/1M = 0.00336 EUR.
     assert job.ai_cost_eur == Decimal("0.003360")
-    # Contratto API: i tre campi sono esposti nel dettaglio job.
+    # Contratto API: i costi NON sono esposti all'utente (solo admin Django).
     api_client.force_authenticate(user)
     detail = api_client.get(f"/api/v1/jobs/{job.pk}/")
-    assert detail.data["ai_tokens_in"] == 1000
-    assert detail.data["ai_tokens_out"] == 500
-    assert detail.data["ai_cost_eur"] == "0.003360"
+    assert "ai_tokens_in" not in detail.data
+    assert "ai_tokens_out" not in detail.data
+    assert "ai_cost_eur" not in detail.data
 
 
 @pytest.mark.django_db
