@@ -194,11 +194,12 @@ nginx+certbot su `api.verdimetria.cais.uno`) e `verdimetria-celery.service`
 sistema. Frontend: Cloudflare Worker statico (`V2/`, deploy con
 `npm run build && npx wrangler deploy`).
 
-Deploy backend:
+Deploy backend (dal 2026-08-06: `/opt/verdimetria` e' un clone git, come Zeus —
+prima era rsync, che lasciava il server disallineato rispetto al repo):
 
 ```bash
-rsync -az --exclude '__pycache__' backend src pcc:/opt/verdimetria/
-ssh pcc "cd /opt/verdimetria && .venv/bin/pip install -r requirements.txt \
+ssh pcc "cd /opt/verdimetria && git pull -q origin main \
+  && .venv/bin/pip install -r requirements.txt \
   && .venv/bin/python manage.py migrate \
   && sudo systemctl restart verdimetria verdimetria-celery"
 ```

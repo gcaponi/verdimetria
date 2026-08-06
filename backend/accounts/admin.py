@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from django.db import connection
+from django.db import connections, router, transaction
 
 from backend.accounts.models import User
 
@@ -46,14 +46,20 @@ class VerdimetriaUserAdmin(UserAdmin):
         con `verdimetria.allow_purge=on`. L'eliminazione dall'admin e'
         esplicita e riservata a staff/superuser, quindi il bypass vale solo
         per questa transazione (SET LOCAL decade al commit/rollback).
+        Va chiamato DENTRO transaction.atomic: SET LOCAL fallisce altrove.
+        Usa la connessione di scrittura del modello (multi-DB safe).
         """
-        with connection.cursor() as cursor:
+        db = router.db_for_write(self.model)
+        with connections[db].cursor() as cursor:
             cursor.execute("SET LOCAL verdimetria.allow_purge = 'on'")
 
     def delete_model(self, request, obj):
-        self._enable_purge()
-        super().delete_model(request, obj)
+        # atomic self-contained: non dipende dal contratto implicito del caller
+        with transaction.atomic():
+            self._enable_purge()
+            super().delete_model(request, obj)
 
     def delete_queryset(self, request, queryset):
-        self._enable_purge()
-        super().delete_queryset(request, queryset)
+        with transaction.atomic():
+            self._enable_purge()
+            super().delete_queryset(request, queryset)
