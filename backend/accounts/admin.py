@@ -39,27 +39,29 @@ class VerdimetriaUserAdmin(UserAdmin):
         ),
     )
 
-    def _enable_purge(self) -> None:
-        """Abilita il purge SOLO per la transazione corrente.
+    def _enable_purge(self, db: str) -> None:
+        """Abilita il purge SOLO per la transazione corrente su `db`.
 
         La guardia DB `verdimetria_guard` blocca i DELETE fuori da una sessione
         con `verdimetria.allow_purge=on`. L'eliminazione dall'admin e'
         esplicita e riservata a staff/superuser, quindi il bypass vale solo
         per questa transazione (SET LOCAL decade al commit/rollback).
-        Va chiamato DENTRO transaction.atomic: SET LOCAL fallisce altrove.
-        Usa la connessione di scrittura del modello (multi-DB safe).
+        Va chiamato DENTRO transaction.atomic(using=db): SET LOCAL fallisce
+        altrove, e la connessione deve essere la stessa del DELETE.
         """
-        db = router.db_for_write(self.model)
         with connections[db].cursor() as cursor:
             cursor.execute("SET LOCAL verdimetria.allow_purge = 'on'")
 
     def delete_model(self, request, obj):
-        # atomic self-contained: non dipende dal contratto implicito del caller
-        with transaction.atomic():
-            self._enable_purge()
+        # atomic self-contained sulla connessione di scrittura del modello:
+        # non dipende dal contratto implicito del caller ne' dal default DB
+        db = router.db_for_write(self.model)
+        with transaction.atomic(using=db):
+            self._enable_purge(db)
             super().delete_model(request, obj)
 
     def delete_queryset(self, request, queryset):
-        with transaction.atomic():
-            self._enable_purge()
+        db = router.db_for_write(self.model)
+        with transaction.atomic(using=db):
+            self._enable_purge(db)
             super().delete_queryset(request, queryset)
