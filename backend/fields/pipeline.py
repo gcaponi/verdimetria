@@ -346,8 +346,10 @@ def build_field_analysis(
             "quality": "Feature morfometriche calcolate localmente sul poligono",
         },
         {
-            "provider": ai["provider"],
-            "dataset": ai["model"],
+            # Il modello AI sottostante resta interno (costi/log): all'utente
+            # si mostra solo la provenienza dei dati, non il provider LLM.
+            "provider": "Verdimetria AI",
+            "dataset": "Metriche aggregate Sentinel-2 / Copernicus",
             "services": ["Interpretazione strutturata"],
             "quality": "Solo metriche aggregate; nessuna prescrizione automatica",
         },

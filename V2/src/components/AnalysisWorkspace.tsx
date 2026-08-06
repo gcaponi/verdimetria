@@ -20,7 +20,7 @@ import WeatherSection from "@/sections/WeatherSection";
 import VegetationCharts from "@/sections/VegetationCharts";
 import RealInsightsSection from "@/sections/RealInsightsSection";
 import InterventionsSection from "@/sections/InterventionsSection";
-import { analyzeArea, fetchLatestCompletedJob } from "@/lib/analysis";
+import { analyzeArea, fetchJobHistory } from "@/lib/analysis";
 import type { AnalysisStatus, FieldAnalysis, FieldJob } from "@/lib/analysis";
 import { getApiBaseUrl } from "@/lib/auth";
 import { FieldsApiError } from "@/lib/fields";
@@ -93,14 +93,18 @@ export default function AnalysisWorkspace({
   const [reportError, setReportError] = useState<string | null>(null);
 
   // On open, load the latest completed analysis instead of starting a new job.
+  // Campo mai analizzato (storico vuoto): la prima analisi parte da sola.
   useEffect(() => {
     if (precomputedAnalysis) return;
     const controller = new AbortController();
     getAuthHeader()
-      .then((authorization) => fetchLatestCompletedJob(area.id, authorization, controller.signal))
-      .then((job) => {
-        if (job?.result) {
-          setAnalysisState({ key: requestKey, analysis: job.result, status: "ready", error: null, job });
+      .then((authorization) => fetchJobHistory(area.id, authorization, controller.signal))
+      .then((history) => {
+        if (history.latest?.result) {
+          setAnalysisState({ key: requestKey, analysis: history.latest.result, status: "ready", error: null, job: history.latest });
+        } else if (history.totalJobs === 0) {
+          setAnalysisState({ key: requestKey, analysis: null, status: "empty", error: null, job: null });
+          startAnalysis();
         } else {
           setAnalysisState({ key: requestKey, analysis: null, status: "empty", error: null, job: null });
         }
@@ -132,9 +136,10 @@ export default function AnalysisWorkspace({
     getAuthHeader()
       .then(async (authorization) => {
         await analyzeArea(area, authorization, controller.signal);
-        return fetchLatestCompletedJob(area.id, authorization, controller.signal);
+        return fetchJobHistory(area.id, authorization, controller.signal);
       })
-      .then((job) => {
+      .then((history) => {
+        const job = history.latest;
         if (job?.result) {
           setAnalysisState({ key: requestKey, analysis: job.result, status: "ready", error: null, job });
           setRefresh({ key: requestKey, busy: false, error: null, paywalled: false });
@@ -224,7 +229,6 @@ export default function AnalysisWorkspace({
 
   const endDate = currentJob?.params?.end_date ?? analysis?.period.to ?? null;
   const completedAt = currentJob?.completed_at ?? null;
-  const costLabel = formatCostEur(currentJob?.ai_cost_eur);
 
   return (
     <section className="border-y border-slate-800">
@@ -267,7 +271,6 @@ export default function AnalysisWorkspace({
           onDownloadReport={downloadReport}
           endDate={endDate}
           completedAt={completedAt}
-          costLabel={costLabel}
           refreshing={refreshState.busy}
           refreshError={refreshState.error}
         />
@@ -311,7 +314,6 @@ export default function AnalysisWorkspace({
             refreshPaywalled={refreshState.paywalled}
             endDate={endDate}
             completedAt={completedAt}
-            costLabel={costLabel}
           />
         )}
         {activeTab === "interventions" && !precomputedAnalysis && (
@@ -362,7 +364,7 @@ function Overview({
     {
       label: "Interpretazione",
       value: analysis ? (analysis.ai.status === "generated" ? "AI" : "Regole") : status === "loading" ? "..." : "n/d",
-      detail: analysis?.ai.model ?? "in elaborazione",
+      detail: analysis ? "Interpretazione da evidenze CDSE" : "in elaborazione",
     },
   ];
 
@@ -553,13 +555,11 @@ function InsightsAnalysis({
   refreshPaywalled,
   endDate,
   completedAt,
-  costLabel,
 }: AnalysisResultProps & {
   refreshError?: string | null;
   refreshPaywalled?: boolean;
   endDate: string | null;
   completedAt: string | null;
-  costLabel: string | null;
 }) {
   return (
     <div className="space-y-5">
@@ -576,11 +576,6 @@ function InsightsAnalysis({
                 <>
                   Dati al <span className="font-semibold text-slate-200">{formatDate(endDate ?? analysis.period.to)}</span>
                   {completedAt && <> · aggiornato {formatDateTime(completedAt)}</>}
-                  {costLabel && (
-                    <>
-                      {" "}· Costo aggiornamento: <span className="font-semibold text-cyan-300">€ {costLabel}</span>
-                    </>
-                  )}
                 </>
               ) : (
                 "Nessuna analisi ancora eseguita su questo campo: avvia la prima per generare statistiche e AI Insights."
@@ -645,7 +640,6 @@ function AnalysisRunStatus({
   onDownloadReport,
   endDate,
   completedAt,
-  costLabel,
   refreshing,
   refreshError,
 }: AnalysisResultProps & {
@@ -655,7 +649,6 @@ function AnalysisRunStatus({
   onDownloadReport: () => void;
   endDate: string | null;
   completedAt: string | null;
-  costLabel: string | null;
   refreshing: boolean;
   refreshError: string | null;
 }) {
@@ -684,7 +677,6 @@ function AnalysisRunStatus({
           <span className="text-slate-500">
             · Dati al {formatDate(endDate)}
             {completedAt && <> · aggiornato {formatDateTime(completedAt)}</>}
-            {costLabel && <> · costo € {costLabel}</>}
           </span>
         )}
       </div>
@@ -965,12 +957,4 @@ function formatDateTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
-}
-
-/** "0.002310" -> "0,0023"; null when missing or zero (old jobs / fallback). */
-function formatCostEur(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  return amount.toLocaleString("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 }

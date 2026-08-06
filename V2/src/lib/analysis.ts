@@ -71,8 +71,6 @@ export interface FieldAnalysis {
     validPixels: number;
   };
   ai: {
-    provider: string;
-    model: string;
     status: "generated" | "fallback";
     summary: string;
     insights: AnalysisInsight[];
@@ -106,22 +104,28 @@ export interface FieldJob {
   created_at?: string;
   completed_at?: string | null;
   params?: { end_date?: string | null } | null;
-  ai_tokens_in?: number | null;
-  ai_tokens_out?: number | null;
-  ai_cost_eur?: string | null;
+}
+
+export interface JobHistory {
+  latest: FieldJob | null;
+  /** Quanti job esistono per il campo: 0 = campo mai analizzato (auto-start). */
+  totalJobs: number;
 }
 
 const POLL_INTERVAL_MS = 3_000;
 const POLL_TIMEOUT_MS = 5 * 60_000;
 
-/** Latest completed job with a result for the field, or null if none exists yet. */
-export async function fetchLatestCompletedJob(
+/** Ultima analisi completata + totale job (per distinguere campo nuovo). */
+export async function fetchJobHistory(
   areaId: string,
   authorization: string,
   signal?: AbortSignal,
-): Promise<FieldJob | null> {
+): Promise<JobHistory> {
   const jobs = await jobRequest<FieldJob[]>(`/api/v1/fields/${areaId}/jobs/`, authorization, { signal });
-  return jobs.find((job) => job.status === "completed" && job.result != null) ?? null;
+  return {
+    latest: jobs.find((job) => job.status === "completed" && job.result != null) ?? null,
+    totalJobs: jobs.length,
+  };
 }
 
 export async function analyzeArea(

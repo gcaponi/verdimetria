@@ -376,8 +376,6 @@ def compute_ai_cost_eur(tokens_in: int, tokens_out: int, model: str) -> Decimal:
 
 def _fallback_result(insights: list[dict[str, Any]]) -> dict[str, Any]:
     return {
-        "provider": "Verdimetria rules",
-        "model": "evidence-rules-v1",
         "status": "fallback",
         "summary": FALLBACK_SUMMARY,
         "insights": insights,
@@ -528,8 +526,8 @@ def generate_insights(
         if parsed is None:
             raise ValueError("Output AI non strutturato")
         return {
-            "provider": "DeepSeek",
-            "model": model,
+            # provider/model restano interni (costi, log): non si espongono
+            # all'utente pubblico per scelta di prodotto.
             "status": "generated",
             "summary": parsed["summary"],
             "insights": parsed["insights"],

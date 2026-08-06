@@ -32,8 +32,6 @@ export default function RealInsightsSection({ analysis }: Props) {
             <div className={generated ? "text-emerald-300" : "text-amber-300"}>
               {generated ? "AI generata" : "Fallback deterministico"}
             </div>
-            <div>{analysis.ai.provider}</div>
-            <div>{analysis.ai.model}</div>
           </div>
         </div>
       </div>

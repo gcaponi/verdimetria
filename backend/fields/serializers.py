@@ -20,11 +20,8 @@ class InterventionSerializer(serializers.ModelSerializer):
 
 
 class AnalysisJobSerializer(serializers.ModelSerializer):
-    # Contratto frontend: il costo AI e' una stringa decimale ("0.002310"),
-    # nonostante il COERCE_DECIMAL_TO_STRING=False globale.
-    ai_cost_eur = serializers.DecimalField(
-        max_digits=10, decimal_places=6, read_only=True, coerce_to_string=True
-    )
+    # Costi/token AI: SOLO in admin Django (prodotto), non esposti nell'API
+    # pubblica. Restano sul modello per la reportistica interna.
 
     class Meta:
         model = AnalysisJob
@@ -38,9 +35,6 @@ class AnalysisJobSerializer(serializers.ModelSerializer):
             "result",
             "error",
             "attempts",
-            "ai_tokens_in",
-            "ai_tokens_out",
-            "ai_cost_eur",
             "created_at",
             "started_at",
             "completed_at",
