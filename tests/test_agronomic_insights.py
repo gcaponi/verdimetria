@@ -2,6 +2,7 @@
 
 import json
 from datetime import date
+from decimal import Decimal
 from typing import Any
 from unittest.mock import Mock
 
@@ -10,6 +11,7 @@ from rest_framework.test import APIClient
 
 from backend.accounts.models import User
 from backend.fields.insights import (
+    compute_ai_cost_eur,
     generate_insights,
     parse_ai_content,
     rule_based_insights,
@@ -145,7 +147,10 @@ def _mock_deepseek(monkeypatch: pytest.MonkeyPatch, content: Any = AI_CONTENT) -
         ok = True
 
         def json(self) -> dict[str, Any]:
-            return {"choices": [{"message": {"content": content_str}}]}
+            return {
+                "choices": [{"message": {"content": content_str}}],
+                "usage": {"prompt_tokens": 1200, "completion_tokens": 400},
+            }
 
     def _post(url: str, headers: Any = None, json: Any = None, timeout: Any = None) -> Any:
         captured["url"] = url
@@ -164,7 +169,7 @@ def _request_payload(captured: dict[str, Any]) -> dict[str, Any]:
 def test_prompt_carries_full_agronomic_context(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _mock_deepseek(monkeypatch)
 
-    result = generate_insights(_metrics())
+    result, _usage = generate_insights(_metrics())
 
     assert result["status"] == "generated"
     system_prompt = captured["request"]["messages"][0]["content"]
@@ -185,7 +190,7 @@ def test_prompt_carries_full_agronomic_context(monkeypatch: pytest.MonkeyPatch) 
 def test_generated_output_keeps_unchanged_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_deepseek(monkeypatch)
 
-    result = generate_insights(_metrics())
+    result, usage = generate_insights(_metrics())
 
     assert set(result) == {"provider", "model", "status", "summary", "insights"}
     assert result["status"] == "generated"
@@ -195,6 +200,8 @@ def test_generated_output_keeps_unchanged_schema(monkeypatch: pytest.MonkeyPatch
         assert set(insight) == {"tone", "title", "text", "evidence"}
         assert insight["tone"] in {"alert", "warn", "ok", "info"}
         assert all(isinstance(insight[key], str) for key in ("title", "text", "evidence"))
+    # Usage token riportata dal blocco `usage` della risposta DeepSeek.
+    assert usage == {"tokens_in": 1200, "tokens_out": 400, "model": "deepseek-v4-pro"}
 
 
 def test_prompt_omits_crop_and_interventions_when_empty(
@@ -218,9 +225,10 @@ def test_fallback_produces_actionable_agronomic_insights(
         Mock(side_effect=AssertionError("il fallback non deve chiamare DeepSeek")),
     )
 
-    result = generate_insights(_metrics())
+    result, usage = generate_insights(_metrics())
 
     assert result["status"] == "fallback"
+    assert usage is None  # chiave assente: nessuna chiamata, nessun costo
     assert set(result) == {"provider", "model", "status", "summary", "insights"}
     titles = [insight["title"] for insight in result["insights"]]
     assert any(title.startswith("Diagnosi:") for title in titles)
@@ -277,7 +285,7 @@ def test_fallback_with_empty_crop_and_interventions(monkeypatch: pytest.MonkeyPa
         },
     )
 
-    result = generate_insights(calm_metrics)
+    result, _usage = generate_insights(calm_metrics)
 
     assert result["status"] == "fallback"
     titles = [insight["title"] for insight in result["insights"]]
@@ -291,10 +299,20 @@ def test_fallback_with_empty_crop_and_interventions(monkeypatch: pytest.MonkeyPa
 def test_invalid_ai_output_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_deepseek(monkeypatch, content="non e' JSON strutturato")
 
-    result = generate_insights(_metrics())
+    result, usage = generate_insights(_metrics())
 
     assert result["status"] == "fallback"
+    assert usage is None  # output non valido: niente usage, nessun costo tracciato
     assert result["insights"]  # il fallback rule-based resta completo
+
+
+def test_ai_cost_uses_model_pricing() -> None:
+    # v4-pro: prezzo unico 2.24 EUR/1M token (input e output).
+    assert compute_ai_cost_eur(1000, 500, "deepseek-v4-pro") == Decimal("0.003360")
+    # v4-flash: input 0.14 e output 0.28 EUR/1M token.
+    assert compute_ai_cost_eur(1000, 500, "deepseek-v4-flash") == Decimal("0.000280")
+    # Modello sconosciuto: prezzo di default v4-pro.
+    assert compute_ai_cost_eur(1000, 500, "deepseek-futuro") == Decimal("0.003360")
 
 
 def test_parse_ai_content_keeps_up_to_six_insights() -> None:
@@ -470,9 +488,9 @@ def test_task_passes_derived_blocks_and_interventions_to_insights(
     )
     captured: dict[str, Any] = {}
 
-    def _capture(metrics: dict[str, Any]) -> dict[str, Any]:
+    def _capture(metrics: dict[str, Any]) -> tuple[dict[str, Any], None]:
         captured["metrics"] = metrics
-        return AI_RESULT
+        return AI_RESULT, None
 
     monkeypatch.setattr("backend.fields.tasks.generate_insights", _capture)
     field.crop = "Grano duro"

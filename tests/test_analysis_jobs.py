@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Any
 from unittest.mock import Mock
 
@@ -185,7 +186,9 @@ def _mock_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "backend.fields.tasks.compute_morphometry", lambda *a, **k: TERRAIN_RESULT
     )
-    monkeypatch.setattr("backend.fields.tasks.generate_insights", lambda metrics: AI_RESULT)
+    monkeypatch.setattr(
+        "backend.fields.tasks.generate_insights", lambda metrics: (AI_RESULT, None)
+    )
 
 
 @pytest.mark.django_db
@@ -363,6 +366,10 @@ def test_task_completes_job_with_field_analysis(
     assert result["terrain"] == TERRAIN_RESULT
     assert result["ai"] == AI_RESULT
     assert result["provenance"]
+    # Fallback rule-based (usage None): nessun costo AI tracciato.
+    assert job.ai_tokens_in == 0
+    assert job.ai_tokens_out == 0
+    assert job.ai_cost_eur == Decimal("0")
 
     # NDMI block mirrors the vegetation one (single Statistical request).
     ndmi = result["ndmi"]
@@ -388,6 +395,76 @@ def test_task_completes_job_with_field_analysis(
     assert "ndmi" not in first_point
     assert "histogram" not in first_point
     assert "NDMI" in result["provenance"][0]["quality"]
+
+
+AI_USAGE: dict[str, Any] = {"tokens_in": 1000, "tokens_out": 500, "model": "deepseek-v4-pro"}
+
+
+@pytest.mark.django_db
+def test_task_records_ai_usage_and_cost(
+    monkeypatch: pytest.MonkeyPatch,
+    api_client: APIClient,
+    user: User,
+    field: Field,
+) -> None:
+    _mock_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        "backend.fields.tasks.generate_insights", lambda metrics: (AI_RESULT, AI_USAGE)
+    )
+    params = build_job_params(field)
+    job = AnalysisJob.objects.create(
+        field=field,
+        owner=user,
+        boundary_version=params["boundary_version"],
+        idempotency_key=compute_idempotency_key(field, params),
+        params=params,
+    )
+
+    run_analysis_job.run(str(job.pk))
+
+    job.refresh_from_db()
+    assert job.status == AnalysisJob.Status.COMPLETED
+    assert job.ai_tokens_in == 1000
+    assert job.ai_tokens_out == 500
+    # (1000 + 500) token * 2.24 EUR/1M = 0.00336 EUR.
+    assert job.ai_cost_eur == Decimal("0.003360")
+    # Contratto API: i tre campi sono esposti nel dettaglio job.
+    api_client.force_authenticate(user)
+    detail = api_client.get(f"/api/v1/jobs/{job.pk}/")
+    assert detail.data["ai_tokens_in"] == 1000
+    assert detail.data["ai_tokens_out"] == 500
+    assert detail.data["ai_cost_eur"] == "0.003360"
+
+
+@pytest.mark.django_db
+def test_task_fallback_leaves_ai_cost_fields_at_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    api_client: APIClient,
+    user: User,
+    field: Field,
+) -> None:
+    _mock_pipeline(monkeypatch)  # generate_insights ritorna usage None
+    params = build_job_params(field)
+    job = AnalysisJob.objects.create(
+        field=field,
+        owner=user,
+        boundary_version=params["boundary_version"],
+        idempotency_key=compute_idempotency_key(field, params),
+        params=params,
+    )
+
+    run_analysis_job.run(str(job.pk))
+
+    job.refresh_from_db()
+    assert job.status == AnalysisJob.Status.COMPLETED
+    assert job.ai_tokens_in == 0
+    assert job.ai_tokens_out == 0
+    assert job.ai_cost_eur == Decimal("0")
+    api_client.force_authenticate(user)
+    detail = api_client.get(f"/api/v1/jobs/{job.pk}/")
+    assert detail.data["ai_tokens_in"] == 0
+    assert detail.data["ai_tokens_out"] == 0
+    assert detail.data["ai_cost_eur"] == "0.000000"
 
 
 @pytest.mark.django_db
