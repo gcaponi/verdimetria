@@ -1,0 +1,7 @@
+[Unit]
+Description=Verdimetria DR - mirror repo pgBackRest da pcc a disco Back-Up
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rsync -az --delete pcc:/var/lib/pgbackrest/ /run/media/gcaponi/Back-Up/VERDIMETRIA_DR/repo-mirror/
+ExecStartPost=/usr/bin/ssh pcc /usr/bin/touch /var/lib/verdimetria-backup/mirror-last-success

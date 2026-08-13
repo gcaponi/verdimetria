@@ -458,11 +458,12 @@ def test_task_fallback_leaves_ai_cost_fields_at_zero(
     assert job.ai_tokens_in == 0
     assert job.ai_tokens_out == 0
     assert job.ai_cost_eur == Decimal("0")
+    # Anche nel fallback, token e costi restano dati operativi solo-admin.
     api_client.force_authenticate(user)
     detail = api_client.get(f"/api/v1/jobs/{job.pk}/")
-    assert detail.data["ai_tokens_in"] == 0
-    assert detail.data["ai_tokens_out"] == 0
-    assert detail.data["ai_cost_eur"] == "0.000000"
+    assert "ai_tokens_in" not in detail.data
+    assert "ai_tokens_out" not in detail.data
+    assert "ai_cost_eur" not in detail.data
 
 
 @pytest.mark.django_db

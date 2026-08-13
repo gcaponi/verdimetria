@@ -204,12 +204,26 @@ ssh pcc "cd /opt/verdimetria && git pull -q origin main \
   && sudo systemctl restart verdimetria verdimetria-celery"
 ```
 
+Probe backend: `GET /health/` verifica soltanto che il processo Django risponda;
+`GET /ready/` verifica PostgreSQL e Redis con timeout breve. Entrambi sono
+pubblici, non espongono dettagli delle dipendenze e rispondono con
+`Cache-Control: no-store`.
+
+La fonte canonica del vhost API e' `ops/nginx/verdimetria-api.conf`. Sul server
+deve esistere un solo symlink
+`/etc/nginx/sites-enabled/verdimetria-api -> ../sites-available/verdimetria-api`.
+Non lasciare copie `.bak` in `sites-enabled`: nginx carica anche i file di
+backup e genera vhost duplicati. Dopo ogni modifica: `sudo nginx -t`, reload e
+smoke di `/health/`, `/ready/`, `/admin/login/` e `/static/admin/css/base.css`.
+
 Variabili `.env` rilevanti in produzione:
 
 - `CDSE_CLIENT_ID` / `CDSE_CLIENT_SECRET` - OAuth Copernicus Data Space;
 - `DEEPSEEK_API_KEY` - interpretazione AI (fallback rule-based se assente);
 - `EMAIL_HOST=smtp-relay.brevo.com` + credenziali SMTP Brevo - email transazionali
   (mittente verificato `info@cais.uno`, DKIM+DMARC attivi);
+- `OPS_ALERT_EMAIL` - destinatario degli alert allowlisted su backup, WAL,
+  disco e mirror; nessun testo arbitrario viene accettato dal comando;
 - `TINITALY_CACHE_DIR=/opt/verdimetria/data/tinitaly` - cache lazy-tile DTM 10m;
 - `CLC_PLUS_RASTER_PATH=/opt/verdimetria/data/clc/clc-plus-2021-italy-10m.tif`;
 - `REPORT_CACHE_DIR` - cache PDF report (default `<BASE_DIR>/report-cache`);
@@ -228,7 +242,7 @@ contratto di analisi va rigenerato il job demo.
 La **v1.0** (tag git) chiude il prodotto osservativo da satellite: pipeline
 quantitativa NDVI/NDMI/variabilità/morfometria/land-cover, AI agronomo con
 evidenze, diario interventi, report PDF A4, demo pubblica, anti-abuso, email
-transazionali. Suite 128 test verdi.
+transazionali. Baseline corrente: 190 test verdi.
 
 Il **paywall** (agosto 2026) attiva la monetizzazione: registrazione libera, ma
 creazione campi e analisi richiedono un abbonamento Stripe a 3 tier mensili

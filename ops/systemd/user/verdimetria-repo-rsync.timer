@@ -1,0 +1,9 @@
+[Unit]
+Description=Verdimetria DR - mirror repo pgBackRest ogni 6 ore
+
+[Timer]
+OnCalendar=*-*-* 00/6:13:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

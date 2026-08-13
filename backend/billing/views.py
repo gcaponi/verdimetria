@@ -5,10 +5,12 @@ verifica della firma HMAC (`STRIPE_WEBHOOK_SECRET`). Ogni evento e' registrato
 una sola volta in `StripeEvent` per idempotenza sui replay.
 """
 
-from datetime import UTC, datetime
-from typing import Any, Callable, cast
-
 import json
+import logging
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, cast
+
 import stripe
 from django.conf import settings
 from rest_framework import status
@@ -21,26 +23,82 @@ from backend.accounts.models import User
 from backend.billing.models import StripeEvent, Subscription
 from backend.billing.services import ACTIVE_STATUSES, get_entitlements
 
+logger = logging.getLogger(__name__)
+
+PAYMENT_PROVIDER_UNAVAILABLE = "Servizio di pagamento temporaneamente non disponibile"
+
+
+def _is_missing_customer_error(error: stripe.error.StripeError) -> bool:
+    """True only for the Stripe error emitted by a stale customer id."""
+    return (
+        isinstance(error, stripe.error.InvalidRequestError)
+        and getattr(error, "code", None) == "resource_missing"
+        and getattr(error, "param", None) == "customer"
+    )
+
+
+def _clear_remote_subscription_state(subscription: Subscription) -> None:
+    """Invalidate every local field whose authority is the remote Stripe state."""
+    subscription.stripe_customer_id = ""
+    subscription.stripe_subscription_id = ""
+    subscription.status = ""
+    subscription.plan_id = ""
+    subscription.current_period_end = None
+    subscription.cancel_at_period_end = False
+    subscription.save(
+        update_fields=(
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "status",
+            "plan_id",
+            "current_period_end",
+            "cancel_at_period_end",
+            "updated_at",
+        )
+    )
+
+
+def _create_customer(user: User, subscription: Subscription | None) -> tuple[Subscription, str]:
+    customer = stripe.Customer.create(
+        email=user.email,
+        metadata={"user_id": str(user.pk)},
+    )
+    customer_id = str(customer.id)
+    if subscription is None:
+        subscription = Subscription.objects.create(
+            user=user,
+            stripe_customer_id=customer_id,
+        )
+    else:
+        subscription.stripe_customer_id = customer_id
+        subscription.save(update_fields=("stripe_customer_id", "updated_at"))
+    return subscription, customer_id
+
+
+def _create_checkout_session(user: User, customer_id: str, price_id: str) -> Any:
+    return stripe.checkout.Session.create(
+        mode="subscription",
+        customer=customer_id,
+        line_items=[{"price": price_id, "quantity": 1}],
+        success_url=f"{settings.FRONTEND_URL.rstrip('/')}/account?checkout=success",
+        cancel_url=f"{settings.FRONTEND_URL.rstrip('/')}/account?checkout=cancelled",
+        client_reference_id=str(user.pk),
+        metadata={"user_id": str(user.pk)},
+    )
+
+
+def _provider_unavailable_response() -> Response:
+    return Response(
+        {"detail": PAYMENT_PROVIDER_UNAVAILABLE},
+        status=status.HTTP_502_BAD_GATEWAY,
+    )
+
 
 class CheckoutView(APIView):
     """POST /api/v1/billing/checkout/ -> URL Stripe Checkout (mode subscription)."""
 
     def post(self, request: Request) -> Response:
         user = cast(User, request.user)
-        subscription = Subscription.objects.filter(user=user).first()
-        customer_id = subscription.stripe_customer_id if subscription else ""
-
-        if not customer_id:
-            customer = stripe.Customer.create(
-                email=user.email,
-                metadata={"user_id": str(user.pk)},
-            )
-            customer_id = str(customer.id)
-            Subscription.objects.update_or_create(
-                user=user,
-                defaults={"stripe_customer_id": customer_id},
-            )
-
         requested_price = ""
         if isinstance(request.data, dict):
             requested_price = str(request.data.get("price_id") or "").strip()
@@ -51,21 +109,40 @@ class CheckoutView(APIView):
             for tier in settings.STRIPE_TIERS.values()
             if tier["price_id"]
         }
-        if allowed_prices and requested_price not in allowed_prices:
+        if not requested_price or requested_price not in allowed_prices:
             return Response(
                 {"detail": "Piano non valido"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            customer=customer_id,
-            line_items=[{"price": requested_price, "quantity": 1}],
-            success_url=f"{settings.FRONTEND_URL.rstrip('/')}/account?checkout=success",
-            cancel_url=f"{settings.FRONTEND_URL.rstrip('/')}/account?checkout=cancelled",
-            client_reference_id=str(user.pk),
-            metadata={"user_id": str(user.pk)},
-        )
+        subscription = Subscription.objects.filter(user=user).first()
+        customer_id = subscription.stripe_customer_id if subscription else ""
+        reused_customer = bool(customer_id)
+        if not customer_id:
+            try:
+                subscription, customer_id = _create_customer(user, subscription)
+            except stripe.error.StripeError:
+                logger.exception("Stripe customer creation failed")
+                return _provider_unavailable_response()
+
+        try:
+            session = _create_checkout_session(user, customer_id, requested_price)
+        except stripe.error.StripeError as error:
+            if not reused_customer or not _is_missing_customer_error(error):
+                logger.exception("Stripe checkout session creation failed")
+                return _provider_unavailable_response()
+
+            # A sandbox customer id copied into live mode (or a deleted remote
+            # customer) is recoverable exactly once. Clear all authoritative
+            # remote state before binding the account to the replacement.
+            assert subscription is not None
+            _clear_remote_subscription_state(subscription)
+            try:
+                subscription, customer_id = _create_customer(user, subscription)
+                session = _create_checkout_session(user, customer_id, requested_price)
+            except stripe.error.StripeError:
+                logger.exception("Stripe checkout retry after stale customer failed")
+                return _provider_unavailable_response()
         return Response({"url": session.url})
 
 
@@ -82,10 +159,26 @@ class PortalView(APIView):
                 {"detail": "Nessun cliente Stripe associato a questo account"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        session = stripe.billing_portal.Session.create(
-            customer=subscription.stripe_customer_id,
-            return_url=f"{settings.FRONTEND_URL.rstrip('/')}/account",
-        )
+        try:
+            session = stripe.billing_portal.Session.create(
+                customer=subscription.stripe_customer_id,
+                return_url=f"{settings.FRONTEND_URL.rstrip('/')}/account",
+            )
+        except stripe.error.StripeError as error:
+            if _is_missing_customer_error(error):
+                _clear_remote_subscription_state(subscription)
+                return Response(
+                    {
+                        "code": "stripe_customer_reset",
+                        "detail": (
+                            "Profilo di pagamento non piu' valido; "
+                            "avvia un nuovo checkout"
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            logger.exception("Stripe billing portal session creation failed")
+            return _provider_unavailable_response()
         return Response({"url": session.url})
 
 

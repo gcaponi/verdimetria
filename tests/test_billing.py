@@ -5,19 +5,23 @@ mockato e i test validano routing, dedup e transizioni di stato. La fixture
 `user` locale NON abbonata sovrascrive quella del conftest (baseline abbonata).
 """
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
-import json
 import pytest
 import stripe
 from rest_framework.test import APIClient
 
 from backend.accounts.models import User
 from backend.billing.models import Subscription
-from backend.billing.services import BillingGateError, enforce_hectare_quota, get_entitlements
+from backend.billing.services import (
+    BillingGateError,
+    enforce_hectare_quota,
+    get_entitlements,
+)
 from backend.fields.models import Field
 
 FIELD_POLYGON: dict[str, Any] = {
@@ -33,6 +37,27 @@ FIELD_POLYGON: dict[str, Any] = {
 
 PERIOD_END = 1893456000  # 2030-01-01T00:00:00Z
 
+TEST_TIERS: dict[str, dict[str, Any]] = {
+    "basic": {
+        "price_id": "price_test",
+        "label": "Basic",
+        "amount_eur_month": 14.99,
+        "max_hectares": 5.0,
+    },
+    "pro": {
+        "price_id": "price_pro",
+        "label": "Pro",
+        "amount_eur_month": 34.99,
+        "max_hectares": 15.0,
+    },
+    "plus": {
+        "price_id": "price_plus",
+        "label": "Plus",
+        "amount_eur_month": 54.99,
+        "max_hectares": None,
+    },
+}
+
 
 @pytest.fixture
 def api_client() -> APIClient:
@@ -45,13 +70,32 @@ def user() -> User:
     return User.objects.create_user(email="farmer@example.com", password="StrongPass-2026!")
 
 
-def activate(user: User, status: str = "active", customer_id: str = "cus_test") -> Subscription:
+@pytest.fixture(autouse=True)
+def configured_tiers(settings: Any) -> None:
+    settings.STRIPE_TIERS = TEST_TIERS
+
+
+def activate(
+    user: User,
+    status: str = "active",
+    customer_id: str = "cus_test",
+    plan_id: str = "price_plus",
+) -> Subscription:
     return Subscription.objects.create(
         user=user,
         stripe_customer_id=customer_id,
         stripe_subscription_id="sub_test",
         status=status,
+        plan_id=plan_id,
         current_period_end=datetime.fromtimestamp(PERIOD_END, tz=timezone.utc),
+    )
+
+
+def missing_customer_error() -> stripe.error.InvalidRequestError:
+    return stripe.error.InvalidRequestError(
+        "No such customer: cus_stale",
+        param="customer",
+        code="resource_missing",
     )
 
 
@@ -129,10 +173,35 @@ def test_checkout_creates_customer_and_returns_session_url(
     assert session_kwargs["mode"] == "subscription"
     assert session_kwargs["customer"] == "cus_new"
     assert session_kwargs["line_items"] == [
-        {"price": "", "quantity": 1}
-    ]  # STRIPE_PRICE_ID vuoto in locale
+        {"price": "price_test", "quantity": 1}
+    ]
     subscription = Subscription.objects.get(user=user)
     assert subscription.stripe_customer_id == "cus_new"
+
+
+@pytest.mark.django_db
+def test_checkout_customer_creation_error_returns_502_without_local_state(
+    api_client: APIClient, user: User
+) -> None:
+    api_client.force_authenticate(user)
+    with (
+        patch(
+            "backend.billing.views.stripe.Customer.create",
+            side_effect=stripe.error.APIConnectionError("upstream segreto"),
+        ),
+        patch(
+            "backend.billing.views.stripe.checkout.Session.create"
+        ) as session_create,
+    ):
+        response = api_client.post("/api/v1/billing/checkout/", {}, format="json")
+
+    assert response.status_code == 502
+    assert response.data == {
+        "detail": "Servizio di pagamento temporaneamente non disponibile"
+    }
+    assert "segreto" not in str(response.data)
+    session_create.assert_not_called()
+    assert not Subscription.objects.filter(user=user).exists()
 
 
 @pytest.mark.django_db
@@ -156,6 +225,99 @@ def test_checkout_reuses_existing_customer(api_client: APIClient, user: User) ->
 
 
 @pytest.mark.django_db
+def test_checkout_replaces_stale_customer_once_and_clears_remote_state(
+    api_client: APIClient, user: User
+) -> None:
+    subscription = activate(user, customer_id="cus_stale")
+    subscription.cancel_at_period_end = True
+    subscription.save(update_fields=("cancel_at_period_end",))
+    api_client.force_authenticate(user)
+    with (
+        patch(
+            "backend.billing.views.stripe.Customer.create",
+            return_value=SimpleNamespace(id="cus_live"),
+        ) as customer_create,
+        patch(
+            "backend.billing.views.stripe.checkout.Session.create",
+            side_effect=[
+                missing_customer_error(),
+                SimpleNamespace(url="https://checkout.stripe.com/pay/recovered"),
+            ],
+        ) as session_create,
+    ):
+        response = api_client.post("/api/v1/billing/checkout/", {}, format="json")
+
+    assert response.status_code == 200
+    assert response.data["url"] == "https://checkout.stripe.com/pay/recovered"
+    assert session_create.call_count == 2
+    customer_create.assert_called_once_with(
+        email=user.email,
+        metadata={"user_id": str(user.pk)},
+    )
+    subscription.refresh_from_db()
+    assert subscription.stripe_customer_id == "cus_live"
+    assert subscription.stripe_subscription_id == ""
+    assert subscription.status == ""
+    assert subscription.plan_id == ""
+    assert subscription.current_period_end is None
+    assert subscription.cancel_at_period_end is False
+
+
+@pytest.mark.django_db
+def test_checkout_stale_customer_retry_happens_only_once(
+    api_client: APIClient, user: User
+) -> None:
+    activate(user, customer_id="cus_stale")
+    api_client.force_authenticate(user)
+    with (
+        patch(
+            "backend.billing.views.stripe.Customer.create",
+            return_value=SimpleNamespace(id="cus_replacement"),
+        ) as customer_create,
+        patch(
+            "backend.billing.views.stripe.checkout.Session.create",
+            side_effect=[missing_customer_error(), missing_customer_error()],
+        ) as session_create,
+    ):
+        response = api_client.post("/api/v1/billing/checkout/", {}, format="json")
+
+    assert response.status_code == 502
+    assert response.data == {
+        "detail": "Servizio di pagamento temporaneamente non disponibile"
+    }
+    assert session_create.call_count == 2
+    assert customer_create.call_count == 1
+
+
+@pytest.mark.django_db
+def test_checkout_does_not_recover_other_stripe_errors_or_leak_details(
+    api_client: APIClient, user: User
+) -> None:
+    activate(user, customer_id="cus_esistente")
+    api_client.force_authenticate(user)
+    with (
+        patch("backend.billing.views.stripe.Customer.create") as customer_create,
+        patch(
+            "backend.billing.views.stripe.checkout.Session.create",
+            side_effect=stripe.error.InvalidRequestError(
+                "price segreto non valido",
+                param="price",
+                code="resource_missing",
+            ),
+        ),
+    ):
+        response = api_client.post("/api/v1/billing/checkout/", {}, format="json")
+
+    assert response.status_code == 502
+    assert response.data == {
+        "detail": "Servizio di pagamento temporaneamente non disponibile"
+    }
+    assert "segreto" not in str(response.data)
+    customer_create.assert_not_called()
+    assert Subscription.objects.get(user=user).stripe_customer_id == "cus_esistente"
+
+
+@pytest.mark.django_db
 def test_portal_requires_existing_customer(api_client: APIClient, user: User) -> None:
     api_client.force_authenticate(user)
     response = api_client.post("/api/v1/billing/portal/", {}, format="json")
@@ -175,6 +337,51 @@ def test_portal_returns_session_url(api_client: APIClient, user: User) -> None:
     assert response.status_code == 200
     assert response.data["url"] == "https://billing.stripe.com/p/session"
     assert portal_create.call_args.kwargs["customer"] == "cus_esistente"
+
+
+@pytest.mark.django_db
+def test_portal_stale_customer_clears_remote_state_and_returns_conflict(
+    api_client: APIClient, user: User
+) -> None:
+    subscription = activate(user, customer_id="cus_stale")
+    subscription.cancel_at_period_end = True
+    subscription.save(update_fields=("cancel_at_period_end",))
+    api_client.force_authenticate(user)
+    with patch(
+        "backend.billing.views.stripe.billing_portal.Session.create",
+        side_effect=missing_customer_error(),
+    ):
+        response = api_client.post("/api/v1/billing/portal/", {}, format="json")
+
+    assert response.status_code == 409
+    assert response.data["code"] == "stripe_customer_reset"
+    subscription.refresh_from_db()
+    assert subscription.stripe_customer_id == ""
+    assert subscription.stripe_subscription_id == ""
+    assert subscription.status == ""
+    assert subscription.plan_id == ""
+    assert subscription.current_period_end is None
+    assert subscription.cancel_at_period_end is False
+
+
+@pytest.mark.django_db
+def test_portal_generic_stripe_error_returns_502_without_leaking_details(
+    api_client: APIClient, user: User
+) -> None:
+    activate(user, customer_id="cus_esistente")
+    api_client.force_authenticate(user)
+    with patch(
+        "backend.billing.views.stripe.billing_portal.Session.create",
+        side_effect=stripe.error.APIConnectionError("upstream segreto"),
+    ):
+        response = api_client.post("/api/v1/billing/portal/", {}, format="json")
+
+    assert response.status_code == 502
+    assert response.data == {
+        "detail": "Servizio di pagamento temporaneamente non disponibile"
+    }
+    assert "segreto" not in str(response.data)
+    assert Subscription.objects.get(user=user).stripe_customer_id == "cus_esistente"
 
 
 @pytest.mark.django_db

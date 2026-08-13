@@ -1,0 +1,11 @@
+[Unit]
+Description=Verdimetria pgBackRest full backup settimanale
+
+[Timer]
+OnCalendar=Sun *-*-* 02:17:00
+Persistent=true
+AccuracySec=1min
+Unit=verdimetria-pgbackrest-backup@full.service
+
+[Install]
+WantedBy=timers.target

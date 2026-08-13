@@ -68,7 +68,11 @@ def test_field_cap_does_not_affect_other_users(api_client: APIClient, user: User
         email="other@example.com",
         password="StrongPass-2026!",
     )
-    Subscription.objects.create(user=other_user, status="active")
+    Subscription.objects.create(
+        user=other_user,
+        status="active",
+        plan_id=user.billing_subscription.plan_id,
+    )
     api_client.force_authenticate(other_user)
 
     response = create_field(api_client)

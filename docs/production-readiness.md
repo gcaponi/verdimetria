@@ -114,8 +114,8 @@ Note operative:
 | Servizio | Variabili | Tipo | Configurazione richiesta | Stato |
 | --- | --- | --- | --- | --- |
 | Postmark | `POSTMARK_SERVER_TOKEN`, `DEFAULT_FROM_EMAIL` | Segreto server | Sender/domain verificato, DKIM e Return-Path | Da attivare |
-| Stripe | `STRIPE_RESTRICTED_KEY`, `STRIPE_WEBHOOK_SECRET` | Segreto server | Restricted key minima e webhook separato per ambiente | Da attivare |
-| Stripe frontend | `VITE_STRIPE_PUBLISHABLE_KEY` | Pubblica | Publishable key dell'ambiente corretto | Da attivare |
+| Stripe | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | Segreto server | `STRIPE_SECRET_KEY` puo' contenere una restricted key con i permessi minimi richiesti; webhook separato per ambiente | Attivo live |
+| Alert operativi | `OPS_ALERT_EMAIL` + SMTP Django | Destinatario interno | Eventi allowlisted, testi fissi, watchdog con dedup per transizione | Asset in `ops/` |
 | Sentry backend | `SENTRY_DSN` | DSN server | Progetto Django, environment e release | Da attivare |
 | Sentry frontend | `VITE_SENTRY_DSN` | DSN pubblico limitato | Progetto React, release e source map protette | Da attivare |
 

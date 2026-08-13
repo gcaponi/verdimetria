@@ -5,12 +5,12 @@ I price_id qui sono finti ("price_basic/pro/plus"): la mappa tier arriva da
 `settings.STRIPE_TIERS` sovrascritta dalla fixture `tiers`.
 """
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-import json
 import pytest
 from rest_framework.test import APIClient
 
@@ -67,7 +67,11 @@ def tiers(settings: Any) -> dict[str, dict[str, Any]]:
     return TEST_TIERS
 
 
-def activate(user: User, plan_id: str = "", status: str = "active") -> Subscription:
+def activate(
+    user: User,
+    plan_id: str = "price_basic",
+    status: str = "active",
+) -> Subscription:
     return Subscription.objects.create(
         user=user,
         stripe_customer_id="cus_test",
@@ -122,12 +126,18 @@ def test_checkout_accepts_explicit_tier(api_client: APIClient, user: User, tiers
 @pytest.mark.django_db
 def test_checkout_rejects_unknown_price(api_client: APIClient, user: User, tiers: Any) -> None:
     api_client.force_authenticate(user)
-    with patch("backend.billing.views.stripe.Customer.create", return_value=SimpleNamespace(id="cus_new")):
+    with (
+        patch("backend.billing.views.stripe.Customer.create") as customer_create,
+        patch("backend.billing.views.stripe.checkout.Session.create") as session_create,
+    ):
         response = api_client.post(
             "/api/v1/billing/checkout/", {"price_id": "price_inesistente"}, format="json"
         )
 
     assert response.status_code == 400
+    customer_create.assert_not_called()
+    session_create.assert_not_called()
+    assert not Subscription.objects.filter(user=user).exists()
 
 
 # ---- entitlement con tier e limite ---------------------------------------
@@ -148,15 +158,15 @@ def test_entitlement_exposes_tier_limit_and_plans(
 
 
 @pytest.mark.django_db
-def test_entitlement_unknown_price_has_no_limit(
+def test_entitlement_unknown_price_fails_closed(
     api_client: APIClient, user: User, tiers: Any
 ) -> None:
-    # Piani storici/ignoti: abbonamento valido, nessuna enforcement ettari.
+    # Un price storico/ignoto non deve trasformarsi in accesso illimitato.
     activate(user, plan_id="price_storico")
     api_client.force_authenticate(user)
     response = api_client.get("/api/v1/billing/entitlement/")
 
-    assert response.data["subscribed"] is True
+    assert response.data["subscribed"] is False
     assert response.data["tier"] is None
     assert response.data["max_hectares"] is None
 
@@ -219,7 +229,7 @@ def test_new_boundary_version_excludes_the_replaced_field(
 def test_boundary_creation_requires_subscription(
     api_client: APIClient, user: User, tiers: Any
 ) -> None:
-    activate(user)  # senza plan_id: abbonato, nessun limite ettari
+    activate(user)
     api_client.force_authenticate(user)
     created = create_field(api_client, SMALL_POLYGON)
     assert created.status_code == 201

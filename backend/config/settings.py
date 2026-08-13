@@ -158,6 +158,7 @@ EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", os.getenv("POSTMARK_SERVER_TOKEN", ""))
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", os.getenv("POSTMARK_SERVER_TOKEN", ""))
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Verdimetria <noreply@localhost>")
+OPS_ALERT_EMAIL = os.getenv("OPS_ALERT_EMAIL", "")
 PASSWORD_RESET_TIMEOUT = int(os.getenv("PASSWORD_RESET_TIMEOUT", "3600"))
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6380/0")

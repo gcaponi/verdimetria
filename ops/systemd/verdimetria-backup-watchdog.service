@@ -1,0 +1,19 @@
+[Unit]
+Description=Verdimetria backup, WAL, disk and mirror watchdog
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/verdimetria-backup-watchdog
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/verdimetria-monitor
+UMask=0027

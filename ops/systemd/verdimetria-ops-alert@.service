@@ -1,0 +1,23 @@
+[Unit]
+Description=Verdimetria operational alert (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=verdimetria
+Group=verdimetria
+WorkingDirectory=/opt/verdimetria
+Environment="PATH=/opt/verdimetria/.venv/bin"
+EnvironmentFile=/opt/verdimetria/.env
+ExecStart=/opt/verdimetria/.venv/bin/python manage.py send_ops_alert %i
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027

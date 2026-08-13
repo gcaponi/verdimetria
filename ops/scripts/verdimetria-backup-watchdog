@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+readonly BACKUP_MARKER="/var/lib/verdimetria-backup/last-success"
+readonly MIRROR_MARKER="/var/lib/verdimetria-backup/mirror-last-success"
+readonly STATE_DIR="/var/lib/verdimetria-monitor"
+readonly PG_ARCHIVE_STATUS="/var/lib/postgresql/16/main/pg_wal/archive_status"
+readonly BACKUP_MAX_AGE_SECONDS=108000  # 30 ore
+readonly MIRROR_MAX_AGE_SECONDS=28800   # 8 ore
+readonly DISK_THRESHOLD=80
+
+delivery_failed=0
+
+exec 9>/run/verdimetria-backup-watchdog.lock
+if ! /usr/bin/flock -n 9; then
+    exit 0
+fi
+
+/usr/bin/install -d -o root -g root -m 0750 "$STATE_DIR"
+
+is_stale() {
+    local path="$1"
+    local max_age="$2"
+    local modified now
+
+    [[ -f "$path" ]] || return 0
+    modified=$(/usr/bin/stat -c %Y "$path") || return 0
+    now=$(/usr/bin/date +%s)
+    (( now - modified > max_age ))
+}
+
+set_condition() {
+    local event="$1"
+    local active="$2"
+    local state_file="$STATE_DIR/$event.active"
+
+    if (( active )); then
+        /usr/bin/logger -t verdimetria-watchdog -- "$event attivo"
+        if [[ ! -e "$state_file" ]]; then
+            if /usr/bin/systemctl start "verdimetria-ops-alert@${event}.service"; then
+                /usr/bin/touch "$state_file"
+            else
+                delivery_failed=1
+                /usr/bin/logger -p user.err -t verdimetria-watchdog -- \
+                    "consegna alert $event fallita"
+            fi
+        fi
+    elif [[ -e "$state_file" ]]; then
+        /usr/bin/rm -f -- "$state_file"
+        /usr/bin/logger -t verdimetria-watchdog -- "$event rientrato"
+    fi
+}
+
+backup_bad=0
+if is_stale "$BACKUP_MARKER" "$BACKUP_MAX_AGE_SECONDS"; then
+    backup_bad=1
+fi
+if ! /usr/sbin/runuser -u postgres -- /usr/bin/pgbackrest \
+    --stanza=verdimetria --output=json info \
+    | /usr/bin/python3 -c \
+        'import json, sys; data=json.load(sys.stdin); raise SystemExit(not data or data[0]["status"]["code"] != 0)' ; then
+    backup_bad=1
+fi
+set_condition "backup-stale" "$backup_bad"
+
+wal_bad=0
+old_ready=$(
+    /usr/bin/find "$PG_ARCHIVE_STATUS" -maxdepth 1 -type f -name '*.ready' \
+        -mmin +10 -print -quit 2>/dev/null || true
+)
+if [[ -n "$old_ready" ]]; then
+    wal_bad=1
+fi
+wal_failure=$(
+    /usr/sbin/runuser -u postgres -- /usr/bin/psql -XAtd postgres -c \
+        "SELECT CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_archived_time < last_failed_time) THEN 1 ELSE 0 END FROM pg_stat_archiver;" \
+        2>/dev/null
+) || wal_failure="1"
+if [[ "$wal_failure" != "0" ]]; then
+    wal_bad=1
+fi
+set_condition "wal-stalled" "$wal_bad"
+
+disk_bad=0
+if ! /usr/bin/df -P /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
+    | /usr/bin/awk 'NR > 1 {gsub(/%/, "", $5); if ($5 >= 80) exit 1}'; then
+    disk_bad=1
+fi
+if ! /usr/bin/df -Pi /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
+    | /usr/bin/awk 'NR > 1 {gsub(/%/, "", $5); if ($5 >= 80) exit 1}'; then
+    disk_bad=1
+fi
+set_condition "disk-pressure" "$disk_bad"
+
+mirror_bad=0
+if is_stale "$MIRROR_MARKER" "$MIRROR_MAX_AGE_SECONDS"; then
+    mirror_bad=1
+fi
+set_condition "mirror-stale" "$mirror_bad"
+
+exit "$delivery_failed"

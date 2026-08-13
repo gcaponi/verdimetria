@@ -1,0 +1,11 @@
+[Unit]
+Description=Verdimetria operational watchdog hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+Unit=verdimetria-backup-watchdog.service
+
+[Install]
+WantedBy=timers.target

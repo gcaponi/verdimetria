@@ -70,8 +70,15 @@ def get_entitlements(user: User) -> dict[str, object]:
             "plans": available_plans(),
         }
     subscription = Subscription.objects.filter(user=user).first()
-    subscribed = subscription is not None and subscription.status in ACTIVE_STATUSES
     tier = tier_for_price(subscription.plan_id) if subscription is not None else None
+    # Fail closed: an active Stripe status is insufficient when its price is
+    # not one of the plans configured for this deployment. This prevents old
+    # sandbox prices (or malformed webhook state) from granting unlimited use.
+    subscribed = (
+        subscription is not None
+        and subscription.status in ACTIVE_STATUSES
+        and tier is not None
+    )
     return {
         "subscribed": subscribed,
         "status": subscription.status if subscription else "",
@@ -119,7 +126,7 @@ def enforce_hectare_quota(
 
     Solleva BillingGateError (402 lato view) se l'utente non e' abbonato o se
     il totale supererebbe il limite del piano. Tier con max_hectares None
-    (plus, staff, piani storici ignoti) non hanno limite.
+    (plus, staff o accesso omaggio) non hanno limite.
     """
     entitlements = get_entitlements(owner)
     if not entitlements["subscribed"]:

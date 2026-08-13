@@ -1,0 +1,11 @@
+[Unit]
+Description=Verdimetria pgBackRest differential backup giornaliero
+
+[Timer]
+OnCalendar=Mon..Sat *-*-* 02:17:00
+Persistent=true
+AccuracySec=1min
+Unit=verdimetria-pgbackrest-backup@diff.service
+
+[Install]
+WantedBy=timers.target

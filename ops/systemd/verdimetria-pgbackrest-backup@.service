@@ -1,0 +1,22 @@
+[Unit]
+Description=Verdimetria pgBackRest %i backup
+OnFailure=verdimetria-ops-alert@backup-failed.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=/usr/bin/pgbackrest --stanza=verdimetria --type=%i backup
+ExecStartPost=/usr/bin/touch /var/lib/verdimetria-backup/last-success
+StandardOutput=append:/var/log/pgbackrest/verdimetria-cron.log
+StandardError=append:/var/log/pgbackrest/verdimetria-cron.log
+Nice=10
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+UMask=0027
