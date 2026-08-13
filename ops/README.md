@@ -18,6 +18,21 @@ Le copie di rollback nginx devono stare fuori da `sites-enabled`.
    `verdimetria-ops-alert@test.service`. Un exit code zero prova l'accettazione
    SMTP; la ricezione deve essere confermata dal destinatario.
 
+## Download DR temporanei
+
+Il vhost include `/etc/nginx/snippets/verdimetria-secure-download.conf`, che
+deve esistere prima di installare o verificare il vhost. La copia live contiene
+la location privata, `secure_link` con scadenza e un segreto generato sulla VPS:
+non va mai committata. I pacchetti risiedono in
+`/var/lib/verdimetria-downloads/`, senza directory listing, owner root e accesso
+in lettura al solo gruppo `www-data`. Ogni link deve scadere e il relativo file
+va eliminato automaticamente dopo la scadenza.
+
+Il pacchetto DR non deve contenere `.env`, password, token, chiavi TLS/SSH o la
+passphrase pgBackRest. Prima dell'invio: verificare ZIP e checksum, provare link
+valido/scaduto/senza firma e comunicare la passphrase solo tramite il vault o un
+canale separato.
+
 Il watchdog controlla backup oltre 30 ore, pgBackRest non sano, WAL `.ready`
 oltre 10 minuti o ultimo errore non recuperato, disco/inode almeno all'80% e
 heartbeat mirror oltre 8 ore. I marker in `/var/lib/verdimetria-monitor/`
