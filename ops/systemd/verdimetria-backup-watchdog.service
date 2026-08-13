@@ -7,7 +7,6 @@ Type=oneshot
 User=root
 Group=root
 ExecStart=/usr/local/sbin/verdimetria-backup-watchdog
-NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
 ProtectHome=true

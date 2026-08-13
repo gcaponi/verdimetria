@@ -22,6 +22,8 @@ Il watchdog controlla backup oltre 30 ore, pgBackRest non sano, WAL `.ready`
 oltre 10 minuti o ultimo errore non recuperato, disco/inode almeno all'80% e
 heartbeat mirror oltre 8 ore. I marker in `/var/lib/verdimetria-monitor/`
 garantiscono una sola email per transizione sano→guasto.
+L'unita' resta root per poter interrogare pgBackRest e PostgreSQL tramite
+`runuser`; per questo specifico servizio non va impostato `NoNewPrivileges`.
 
 ## Mirror locale
 
