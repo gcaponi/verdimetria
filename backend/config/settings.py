@@ -39,7 +39,7 @@ def preload_bundled_geospatial_libraries() -> None:
     import_module("shapely.geometry")
 
 
-DEBUG = env_bool("DJANGO_DEBUG", default=True)
+DEBUG = env_bool("DJANGO_DEBUG", default=False)
 UNSAFE_LOCAL_SECRET = "unsafe-local-development-secret-key-only"
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", UNSAFE_LOCAL_SECRET)
 if not DEBUG and SECRET_KEY == UNSAFE_LOCAL_SECRET:
@@ -138,6 +138,15 @@ CORS_ALLOWED_ORIGINS = env_list(
     "http://localhost:5173,http://127.0.0.1:5173,https://verdimetria.cais.uno",
 )
 
+# Chiave di firma JWT separata dal SECRET_KEY (Fase sicurezza 3): ruotabile
+# senza toccare il segreto Django. Obbligatoria in produzione.
+JWT_SIGNING_KEY = os.getenv("DJANGO_JWT_SIGNING_KEY", "").strip()
+if not DEBUG and not JWT_SIGNING_KEY:
+    raise ImproperlyConfigured("DJANGO_JWT_SIGNING_KEY e' obbligatoria quando DEBUG=false")
+SIMPLE_JWT = {
+    "SIGNING_KEY": JWT_SIGNING_KEY or SECRET_KEY,
+}
+
 LANGUAGE_CODE = "it-it"
 TIME_ZONE = "UTC"
 USE_I18N = True
@@ -148,10 +157,14 @@ STATIC_ROOT = os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-EMAIL_BACKEND = os.getenv(
-    "EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend",
-)
+# Fail-closed: in produzione il backend va dichiarato esplicitamente, cosi' un
+# env mancante non puo' degradare i reset token nel console log/journal.
+EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "").strip()
+if not EMAIL_BACKEND:
+    if DEBUG:
+        EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+    else:
+        raise ImproperlyConfigured("EMAIL_BACKEND e' obbligatoria quando DEBUG=false")
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.postmarkapp.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
