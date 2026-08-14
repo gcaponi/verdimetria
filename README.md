@@ -264,6 +264,18 @@ obbligatorie (fail-closed). Inventario metadati (senza valori):
   3 tier mensili (5/15/15+ ha). Senza questi valori checkout/portal/webhook
   falliscono, ma il gate 402 resta attivo per tutti i non abbonati.
 
+Dopo una rotazione Finestra C, sul server (env systemd gia' caricati):
+
+```bash
+cd /opt/verdimetria && .venv/bin/python manage.py smoke_providers health
+cd /opt/verdimetria && .venv/bin/python manage.py smoke_providers cdse
+cd /opt/verdimetria && .venv/bin/python manage.py smoke_providers deepseek
+cd /opt/verdimetria && .venv/bin/python manage.py smoke_providers brevo
+cd /opt/verdimetria && .venv/bin/python manage.py smoke_providers stripe
+```
+
+Il comando chiama le integrazioni di produzione e non stampa valori segreti.
+
 Il campo demo pubblico è un `Field` con `is_demo=True` (flag solo via shell,
 non esposto in API) + almeno un job completato; dopo ogni deploy che cambia il
 contratto di analisi va rigenerato il job demo.
