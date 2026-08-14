@@ -216,7 +216,23 @@ Non lasciare copie `.bak` in `sites-enabled`: nginx carica anche i file di
 backup e genera vhost duplicati. Dopo ogni modifica: `sudo nginx -t`, reload e
 smoke di `/health/`, `/ready/`, `/admin/login/` e `/static/admin/css/base.css`.
 
-Variabili `.env` rilevanti in produzione:
+Segreti di produzione (Fase sicurezza 3, 2026-08-14): il monolite
+`/opt/verdimetria/.env` e' stato smantellato. I valori vivono in file per
+dominio sotto `/etc/verdimetria/` (`root:verdimetria` 0640, dir 0750),
+caricati dalle unita' systemd via `EnvironmentFile` multipli:
+
+- `app.env` - segreto Django, `DJANGO_JWT_SIGNING_KEY`, host CORS, cache GIS;
+- `db.env` - credenziali PostgreSQL e `REDIS_URL`;
+- `smtp.env` - backend e credenziali SMTP Brevo, destinatario alert;
+- `providers.env` - CDSE, DeepSeek;
+- `stripe.env` - chiavi e price_id Stripe;
+- `purge.env` - credenziali identita' `verdimetria_purge` (sorgente dal cron
+  02:37 insieme agli altri file).
+
+Da `DEBUG=false` le variabili `EMAIL_BACKEND` e `DJANGO_JWT_SIGNING_KEY` sono
+obbligatorie (fail-closed). Inventario metadati (senza valori):
+`/etc/verdimetria/inventory.md` + copia off-VPS in
+`VERDIMETRIA_DR/secrets-inventory.md`. Variabili rilevanti:
 
 - `CDSE_CLIENT_ID` / `CDSE_CLIENT_SECRET` - OAuth Copernicus Data Space;
 - `DEEPSEEK_API_KEY` - interpretazione AI (fallback rule-based se assente);
