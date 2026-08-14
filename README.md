@@ -198,11 +198,26 @@ Deploy backend (dal 2026-08-06: `/opt/verdimetria` e' un clone git, come Zeus â€
 prima era rsync, che lasciava il server disallineato rispetto al repo):
 
 ```bash
-ssh pcc "cd /opt/verdimetria && git pull -q origin main \
+ssh pcc 'set -a; for f in /etc/verdimetria/app.env /etc/verdimetria/db.env \
+  /etc/verdimetria/smtp.env /etc/verdimetria/providers.env \
+  /etc/verdimetria/stripe.env /etc/verdimetria/migrate.env; do . $f; done; set +a; \
+  cd /opt/verdimetria && git pull -q origin main \
   && .venv/bin/pip install -r requirements.txt \
   && .venv/bin/python manage.py migrate \
-  && sudo systemctl restart verdimetria verdimetria-celery"
+  && sudo -u postgres psql -d verdimetria -qc "REASSIGN OWNED BY verdimetria_migrator TO verdimetria_owner;" \
+  && sudo systemctl restart verdimetria verdimetria-celery'
 ```
+
+Dal 2026-08-14 (Fase sicurezza 3, Finestra B) le migrazioni girano come
+`verdimetria_migrator` (membro di `verdimetria_owner`, unico ruolo con
+proprieta' e DDL), mentre il runtime usa `verdimetria_app`: solo
+SELECT/INSERT/UPDATE, niente DELETE (bloccato anche dai trigger fail-closed),
+niente CREATE/ALTER, con `statement_timeout=30s`, `lock_timeout=5s` e
+`idle_in_transaction_session_timeout=60s`. Il `REASSIGN OWNED` riporta al
+owner di servizio gli oggetti creati dalla migrazione. Il vecchio ruolo
+`verdimetria` resta LOGIN con DML completo solo come percorso di rollback
+(`db.env` originale in `/var/backups/`); va reso NOLOGIN al termine della
+rotazione credenziali.
 
 Probe backend: `GET /health/` verifica soltanto che il processo Django risponda;
 `GET /ready/` verifica PostgreSQL e Redis con timeout breve. Entrambi sono
