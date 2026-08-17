@@ -31,7 +31,7 @@ stripe==15.4.0        # Paywall abbonamenti (checkout hosted + webhook)
 
 # Visualizzazione
 folium==0.20.0
-matplotlib==3.10.8
+matplotlib==3.11.1
 
 # Report PDF (A4) generato lato server
 reportlab==5.0.0
