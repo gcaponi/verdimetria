@@ -22,6 +22,20 @@ ACTIVE_STATUSES = frozenset({"trialing", "active"})
 class BillingGateError(Exception):
     """Accesso negato dal paywall: le view lo traducono in 402."""
 
+    UNSUBSCRIBED = "unsubscribed"
+    QUOTA = "quota"
+    PUBLIC_MESSAGES = {
+        UNSUBSCRIBED: "Abbonamento attivo richiesto per definire i confini",
+        QUOTA: (
+            "Limite del piano superato. Passa a un piano superiore "
+            "per coprire piu' ettari"
+        ),
+    }
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(self.PUBLIC_MESSAGES[code])
+
 
 def tier_for_price(price_id: str) -> str | None:
     """Chiave del tier (basic/pro/plus) per un price Stripe, None se ignoto."""
@@ -130,7 +144,7 @@ def enforce_hectare_quota(
     """
     entitlements = get_entitlements(owner)
     if not entitlements["subscribed"]:
-        raise BillingGateError("Abbonamento attivo richiesto per definire i confini")
+        raise BillingGateError(BillingGateError.UNSUBSCRIBED)
     limit = entitlements["max_hectares"]
     if limit is None:
         return
@@ -138,7 +152,4 @@ def enforce_hectare_quota(
         str(additional_hectares)
     )
     if total > Decimal(str(limit)):
-        raise BillingGateError(
-            f"Limite del piano superato: {total.normalize()} ha su {limit:g} ha "
-            "disponibili. Passa a un piano superiore per coprire piu' ettari"
-        )
+        raise BillingGateError(BillingGateError.QUOTA)

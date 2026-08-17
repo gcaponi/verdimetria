@@ -61,7 +61,7 @@ class FieldViewSet(viewsets.ModelViewSet):
         except BillingGateError as error:
             # Quota ettari cumulativa del tier superata (vedi serializers).
             return Response(
-                {"detail": str(error)},
+                {"detail": BillingGateError.PUBLIC_MESSAGES[error.code]},
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
 
@@ -77,7 +77,7 @@ class FieldViewSet(viewsets.ModelViewSet):
             boundary = serializer.save()
         except BillingGateError as error:
             return Response(
-                {"detail": str(error)},
+                {"detail": BillingGateError.PUBLIC_MESSAGES[error.code]},
                 status=status.HTTP_402_PAYMENT_REQUIRED,
             )
         return Response(BoundaryVersionSerializer(boundary).data, status=status.HTTP_201_CREATED)
@@ -105,8 +105,11 @@ class FieldViewSet(viewsets.ModelViewSet):
                 start_date=data.get("start_date"),
                 end_date=data.get("end_date"),
             )
-        except ValueError as error:
-            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValueError:
+            return Response(
+                {"detail": "Parametri analisi non validi"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         idempotency_key = compute_idempotency_key(field, params)
         with transaction.atomic():

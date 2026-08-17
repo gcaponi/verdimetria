@@ -91,8 +91,10 @@ class FieldSerializer(serializers.ModelSerializer):
             area = AnalysisArea.from_geojson("Campo", value)
             ensure_italy_coverage(area)
             return area
-        except (TypeError, ValueError) as error:
-            raise serializers.ValidationError(str(error)) from error
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                "Geometria non valida o fuori dalla copertura operativa."
+            )
 
     @transaction.atomic
     def create(self, validated_data: dict[str, Any]) -> Field:
@@ -127,8 +129,10 @@ class BoundaryCreateSerializer(serializers.Serializer):
             area = AnalysisArea.from_geojson(field.name, value)
             ensure_italy_coverage(area)
             return area
-        except (TypeError, ValueError) as error:
-            raise serializers.ValidationError(str(error)) from error
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                "Geometria non valida o fuori dalla copertura operativa."
+            )
 
     def create(self, validated_data: dict[str, Any]) -> BoundaryVersion:
         field = cast(Field, self.context["field"])
