@@ -15,7 +15,7 @@ soilgrids==0.1.5        # SoilGrids via WCS (l'API REST a punti è sospesa da IS
 cdse-client[geo]==0.4.0 # Sentinel-2/DEM via Copernicus Data Space Ecosystem
 requests==2.33.1        # WMS via Configuration Instance Sentinel Hub
 requests-oauthlib==2.0.0 # OAuth per la Process API (dati quantitativi puliti)
-oauthlib==3.2.2
+oauthlib==3.3.1
 
 # Backend web e persistenza
 Django==6.0.7
