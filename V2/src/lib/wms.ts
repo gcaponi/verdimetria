@@ -154,8 +154,10 @@ export const WMS_LAYERS: WmsLayer[] = [
   },
 ];
 
-const WMS_BASE_URL =
-  "https://sh.dataspace.copernicus.eu/ogc/wms/1ca53dc1-1760-4d9a-b80d-52f4d69602d7";
+// Visual CDSE overlays are served by the Worker Process API proxy.
+// The old Sentinel Hub Configuration Instance id is invalid after the
+// 2026-08-14 credential rotation (`Invalid instance id`).
+const LAYER_PREVIEW_PATH = "/api/layer";
 
 function soilLayer(
   id: string,
@@ -192,44 +194,10 @@ function buildSoilGridsLegendUrl(soilProperty: string, remoteLayer: string): str
   return `https://maps.isric.org/mapserv?${params.toString()}`;
 }
 
-export async function loadCdseCatalog(signal?: AbortSignal): Promise<WmsLayer[]> {
-  const params = new URLSearchParams({ SERVICE: "WMS", REQUEST: "GetCapabilities" });
-  const response = await fetch(`${WMS_BASE_URL}?${params.toString()}`, { signal });
-  if (!response.ok) throw new Error(`Capabilities CDSE non disponibili (${response.status})`);
-
-  const document = new DOMParser().parseFromString(await response.text(), "application/xml");
-  if (document.querySelector("parsererror")) throw new Error("Capabilities CDSE non valide");
-
-  const knownRemoteLayers = new Set(
-    WMS_LAYERS.filter((layer) => layer.provider === "cdse").map(
-      (layer) => layer.remoteLayer ?? layer.id
-    )
-  );
-
-  return Array.from(document.getElementsByTagName("Layer"))
-    .map((node) => ({
-      name: directChildText(node, "Name"),
-      title: directChildText(node, "Title"),
-    }))
-    .filter(
-      (entry): entry is { name: string; title: string } =>
-        Boolean(entry.name && entry.title && entry.name !== "WMS" && entry.name !== "default")
-    )
-    .filter((entry) => !knownRemoteLayers.has(entry.name))
-    .map((entry) => ({
-      id: `CDSE:${entry.name}`,
-      label: entry.title,
-      detail: `Layer visuale ${entry.name} dalla Configuration Instance CDSE`,
-      provider: "cdse" as const,
-      group: "cdse-catalog" as const,
-      remoteLayer: entry.name,
-    }))
-    .sort((left, right) => left.label.localeCompare(right.label, "it"));
-}
-
-function directChildText(node: Element, tagName: string): string {
-  const child = Array.from(node.children).find((element) => element.localName === tagName);
-  return child?.textContent?.trim() ?? "";
+export async function loadCdseCatalog(_signal?: AbortSignal): Promise<WmsLayer[]> {
+  // Extra catalog layers came from the deleted Configuration Instance.
+  // First-party visual layers are listed in WMS_LAYERS and rendered via /api/layer.
+  return [];
 }
 
 export const SCENE_WINDOW_DAYS = 90;
@@ -370,18 +338,15 @@ export function buildWmsUrl(layer: WmsLayer, area: MapArea, timeWindow?: SceneTi
 
   const timeRange = timeWindow ?? currentSceneWindow();
   const params = new URLSearchParams({
-    SERVICE: "WMS",
-    VERSION: "1.1.1",
-    REQUEST: "GetMap",
-    LAYERS: layer.remoteLayer ?? layer.id,
-    BBOX: `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`,
-    SRS: "EPSG:4326",
-    WIDTH: "1024",
-    HEIGHT: "1024",
-    FORMAT: "image/png",
-    TRANSPARENT: "true",
-    TIME: `${timeRange.from}/${timeRange.to}`,
-    MAXCC: String(SCENE_MAX_CLOUD_COVER),
+    layer: layer.remoteLayer ?? layer.id,
+    west: String(bounds.west),
+    south: String(bounds.south),
+    east: String(bounds.east),
+    north: String(bounds.north),
+    from: timeRange.from,
+    to: timeRange.to,
+    width: "1024",
+    height: "1024",
   });
-  return `${WMS_BASE_URL}?${params.toString()}`;
+  return `${LAYER_PREVIEW_PATH}?${params.toString()}`;
 }

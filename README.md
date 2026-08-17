@@ -82,13 +82,11 @@ API principali (Django, `https://api.verdimetria.cais.uno`):
 
 ## Il modulo WMS via Configuration Instance (verdimetria)
 
-Hai creato una Configuration Instance su Sentinel Hub (Instance ID
-`1ca53dc1-1760-4d9a-b80d-52f4d69602d7`, template "Full WMS") che espone
-layer già processati — NDVI, Agricoltura, Geologia, Moisture Index, EVI,
-SAVI, NDWI — senza dover scaricare e processare tu le bande grezze.
-`src/ingestion/sentinel_hub_wms.py` costruisce le richieste WMS verso questa
-istanza (URL verificato per correttezza, non ancora chiamato dal vivo per lo
-stesso motivo di rete spiegato sopra).
+L'istanza Sentinel Hub WMS `1ca53dc1-1760-4d9a-b80d-52f4d69602d7` non è
+più valida (`Invalid instance id`, dopo la rotazione credenziali CDSE).
+I layer visuali della mappa (NDVI, EVI, SAVI, NDWI, compositi) passano da
+`GET /api/layer` sul Worker e usano la Process API L2A con le credenziali
+OAuth già configurate. `src/ingestion/sentinel_hub_wms.py` resta storico.
 
 **⚠️ Verifica prima di fidarti dei numeri**: i layer come NDVI nel template
 Full WMS sono storicamente pensati per la *visualizzazione* su mappa

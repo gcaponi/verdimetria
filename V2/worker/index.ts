@@ -45,6 +45,7 @@ interface Insight {
 const TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token";
 const CATALOG_URL = "https://sh.dataspace.copernicus.eu/catalog/v1/search";
 const STATISTICAL_URL = "https://sh.dataspace.copernicus.eu/statistics/v1";
+const PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process";
 const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
 const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro";
 const AI_TIMEOUT_MS = 25_000;
@@ -97,6 +98,20 @@ export default {
       });
     }
 
+    if (url.pathname === "/api/layer") {
+      if (request.method !== "GET") {
+        return json({ error: "Metodo non consentito" }, 405, { Allow: "GET" });
+      }
+      try {
+        return await previewLayer(url, env, context);
+      } catch (error) {
+        const status = error instanceof ApiError ? error.status : 500;
+        const message = error instanceof Error ? error.message : "Errore imprevisto sul layer";
+        console.error("layer_preview_failed", { status, message });
+        return json({ error: message }, status);
+      }
+    }
+
     if (url.pathname === "/api/analyze") {
       if (request.method !== "POST") {
         return json({ error: "Metodo non consentito" }, 405, { Allow: "POST" });
@@ -118,6 +133,197 @@ export default {
     return env.ASSETS.fetch(request);
   },
 } satisfies ExportedHandler<Env>;
+
+const LAYER_PREVIEW_CACHE_SECONDS = 21_600;
+const LAYER_MAX_BBOX_SPAN_DEG = 1;
+const LAYER_EVALSCRIPTS: Record<string, string> = {
+  NDVI: `//VERSION=3
+function setup() {
+  return { input: ["B04", "B08", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  const denom = s.B08 + s.B04;
+  const ndvi = denom === 0 ? 0 : (s.B08 - s.B04) / denom;
+  const viz = colorBlend(
+    ndvi,
+    [-0.2, 0, 0.1, 0.2, 0.4, 0.6, 1],
+    [[0.05,0.05,0.05],[0.82,0.1,0.1],[0.85,0.45,0.1],[0.88,0.88,0.19],[0.19,0.88,0.88],[0.1,0.55,0.88],[0.05,0.2,0.7]]
+  );
+  return [...viz, s.dataMask];
+}`,
+  EVI: `//VERSION=3
+function setup() {
+  return { input: ["B02", "B04", "B08", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  const evi = 2.5 * (s.B08 - s.B04) / (s.B08 + 6 * s.B04 - 7.5 * s.B02 + 1);
+  const viz = colorBlend(
+    evi,
+    [-0.1, 0, 0.2, 0.4, 0.6, 0.9],
+    [[0.47,0.21,0.06],[0.96,0.62,0.04],[0.99,0.91,0.54],[0.4,0.64,0.05],[0.08,0.33,0.18],[0.05,0.16,0.09]]
+  );
+  return [...viz, s.dataMask];
+}`,
+  SAVI: `//VERSION=3
+function setup() {
+  return { input: ["B04", "B08", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  const savi = 1.5 * (s.B08 - s.B04) / (s.B08 + s.B04 + 0.5);
+  const viz = colorBlend(
+    savi,
+    [-0.1, 0, 0.2, 0.4, 0.7],
+    [[0.57,0.25,0.05],[0.98,0.75,0.14],[0.85,0.98,0.62],[0.3,0.49,0.06],[0.08,0.33,0.18]]
+  );
+  return [...viz, s.dataMask];
+}`,
+  NDWI: `//VERSION=3
+function setup() {
+  return { input: ["B03", "B08", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  const denom = s.B03 + s.B08;
+  const ndwi = denom === 0 ? 0 : (s.B03 - s.B08) / denom;
+  const t = Math.max(0, Math.min(1, (ndwi + 0.2) / 0.8));
+  return [t, t, t, s.dataMask];
+}`,
+  AGRICULTURE: `//VERSION=3
+function setup() {
+  return { input: ["B02", "B08", "B11", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  return [Math.min(1, s.B11 * 2.8), Math.min(1, s.B08 * 2.8), Math.min(1, s.B02 * 2.8), s.dataMask];
+}`,
+  GEOLOGY: `//VERSION=3
+function setup() {
+  return { input: ["B04", "B11", "B12", "dataMask"], output: { bands: 4 } };
+}
+function evaluatePixel(s) {
+  return [Math.min(1, s.B12 * 2.8), Math.min(1, s.B11 * 2.8), Math.min(1, s.B04 * 2.8), s.dataMask];
+}`,
+};
+
+async function previewLayer(url: URL, env: Env, context: ExecutionContext): Promise<Response> {
+  if (!env.CDSE_CLIENT_ID || !env.CDSE_CLIENT_SECRET) {
+    throw new ApiError(503, "Credenziali CDSE non configurate nel runtime");
+  }
+  const query = parseLayerQuery(url.searchParams);
+  const evalscript = LAYER_EVALSCRIPTS[query.layer];
+  if (!evalscript) {
+    throw new ApiError(400, "Layer visuale non supportato");
+  }
+
+  const cacheId = await digest(JSON.stringify({ v: 1, ...query }));
+  const cacheKey = new Request(`https://layer-cache.verdimetria/${cacheId}`);
+  const cache = defaultCache();
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const hit = new Response(cached.body, cached);
+    hit.headers.set("X-Verdimetria-Cache", "HIT");
+    return hit;
+  }
+
+  const token = await fetchCdseToken(env);
+  const body = {
+    input: {
+      bounds: {
+        bbox: [query.west, query.south, query.east, query.north],
+        properties: { crs: "http://www.opengis.net/def/crs/EPSG/0/4326" },
+      },
+      data: [
+        {
+          type: "sentinel-2-l2a",
+          dataFilter: {
+            timeRange: {
+              from: `${query.from}T00:00:00Z`,
+              to: `${query.to}T23:59:59Z`,
+            },
+            maxCloudCoverage: 30,
+            mosaickingOrder: "mostRecent",
+          },
+        },
+      ],
+    },
+    output: {
+      width: query.width,
+      height: query.height,
+      responses: [{ identifier: "default", format: { type: "image/png" } }],
+    },
+    evalscript,
+  };
+
+  const response = await fetch(PROCESS_URL, {
+    method: "POST",
+    headers: {
+      Accept: "image/png",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(45_000),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    const noData = /no valid data|no data/i.test(detail);
+    throw new ApiError(
+      noData ? 422 : 502,
+      noData
+        ? "Nessuna scena Sentinel-2 valida nell'intervallo richiesto"
+        : `Process API CDSE non disponibile (${response.status})`,
+    );
+  }
+
+  const bytes = await response.arrayBuffer();
+  const preview = new Response(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": `public, max-age=${LAYER_PREVIEW_CACHE_SECONDS}`,
+      "X-Verdimetria-Cache": "MISS",
+    },
+  });
+  context.waitUntil(cache.put(cacheKey, preview.clone()));
+  return preview;
+}
+
+function parseLayerQuery(params: URLSearchParams): {
+  layer: string;
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+  from: string;
+  to: string;
+  width: number;
+  height: number;
+} {
+  const layer = (params.get("layer") ?? "").trim().toUpperCase();
+  const west = Number(params.get("west"));
+  const south = Number(params.get("south"));
+  const east = Number(params.get("east"));
+  const north = Number(params.get("north"));
+  const from = parseDate(params.get("from") ?? undefined);
+  const to = parseDate(params.get("to") ?? undefined);
+  const width = clampInt(params.get("width"), 256, 64, 1024);
+  const height = clampInt(params.get("height"), 256, 64, 1024);
+  if (!from || !to || from > to) {
+    throw new ApiError(400, "L'intervallo temporale non e' valido");
+  }
+  if (![west, south, east, north].every(Number.isFinite) || west >= east || south >= north) {
+    throw new ApiError(400, "Il riquadro della mappa non e' valido");
+  }
+  if (east - west > LAYER_MAX_BBOX_SPAN_DEG || north - south > LAYER_MAX_BBOX_SPAN_DEG) {
+    throw new ApiError(400, "L'area richiesta per il layer e' troppo grande");
+  }
+  return { layer, west, south, east, north, from, to, width, height };
+}
+
+function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
+  const value = raw == null || raw === "" ? fallback : Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
 
 async function analyze(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
   if (!env.CDSE_CLIENT_ID || !env.CDSE_CLIENT_SECRET) {
@@ -362,18 +568,28 @@ function buildStatisticalRequest(
   };
 }
 
+let cachedCdseToken: { value: string; expiresAt: number } | null = null;
+
 async function fetchCdseToken(env: Env): Promise<string> {
+  if (cachedCdseToken && cachedCdseToken.expiresAt > Date.now() + 30_000) {
+    return cachedCdseToken.value;
+  }
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_id: env.CDSE_CLIENT_ID,
     client_secret: env.CDSE_CLIENT_SECRET,
   });
-  const response = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-    signal: AbortSignal.timeout(20_000),
-  });
+  const requestToken = () =>
+    fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      signal: AbortSignal.timeout(20_000),
+    });
+  let response = await requestToken();
+  if (!response.ok && response.status >= 500) {
+    response = await requestToken();
+  }
   if (!response.ok) {
     throw new ApiError(502, `Autenticazione CDSE non riuscita (${response.status})`);
   }
@@ -381,7 +597,12 @@ async function fetchCdseToken(env: Env): Promise<string> {
   if (!isRecord(payload) || typeof payload.access_token !== "string") {
     throw new ApiError(502, "Token CDSE non valido");
   }
-  return payload.access_token;
+  const expiresIn = typeof payload.expires_in === "number" ? payload.expires_in : 600;
+  cachedCdseToken = {
+    value: payload.access_token,
+    expiresAt: Date.now() + expiresIn * 1000,
+  };
+  return cachedCdseToken.value;
 }
 
 async function fetchProviderJson(
