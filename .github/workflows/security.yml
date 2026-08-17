@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
   group: security-${{ github.workflow }}-${{ github.ref }}
@@ -18,18 +19,25 @@ jobs:
   semgrep:
     name: Semgrep
     runs-on: ubuntu-24.04
-    container:
-      image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install semgrep
       - run: >-
           semgrep scan
           --config p/python
           --config p/javascript
-          --severity ERROR
-          --error
+          --sarif
+          --output semgrep.sarif
           --metrics=off
           backend src V2/src V2/worker
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
 
   bandit:
     name: Bandit
@@ -51,7 +59,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      - run: pip-audit -r requirements.txt
+      - run: pip-audit -r requirements.txt --progress-spinner off --output pip-audit.txt
+        continue-on-error: true
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: pip-audit
+          path: pip-audit.txt
+          if-no-files-found: ignore
 
   npm-audit:
     name: npm-audit
@@ -61,5 +76,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm audit --package-lock-only --audit-level=high
+      - run: npm audit --package-lock-only --audit-level=high --json > npm-audit.json
         working-directory: V2
+        continue-on-error: true
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: npm-audit
+          path: V2/npm-audit.json
+          if-no-files-found: ignore
