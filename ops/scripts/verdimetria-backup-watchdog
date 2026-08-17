@@ -90,11 +90,11 @@ set_condition "wal-stalled" "$wal_bad"
 
 disk_bad=0
 if ! run_timeout /usr/bin/df -P /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
-    | /usr/bin/awk 'NR > 1 {gsub(/%/, "", $5); if ($5 >= 80) exit 1}'; then
+    | /usr/bin/awk -v threshold="$DISK_THRESHOLD" 'NR > 1 {gsub(/%/, "", $5); if ($5 >= threshold) exit 1}'; then
     disk_bad=1
 fi
 if ! run_timeout /usr/bin/df -Pi /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
-    | /usr/bin/awk 'NR > 1 {gsub(/%/, "", $5); if ($5 >= 80) exit 1}'; then
+    | /usr/bin/awk -v threshold="$DISK_THRESHOLD" 'NR > 1 {gsub(/%/, "", $5); if ($5 >= threshold) exit 1}'; then
     disk_bad=1
 fi
 set_condition "disk-pressure" "$disk_bad"

@@ -1,5 +1,6 @@
 """Liveness/readiness probes are public, minimal and dependency bounded."""
 
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 from django.test import Client
@@ -63,10 +64,13 @@ def test_database_probe_executes_select_one() -> None:
     connection = MagicMock()
     connection.cursor.return_value.__enter__.return_value = cursor
 
-    with patch("backend.config.health.connection", connection):
+    with (
+        patch("backend.config.health.connection", connection),
+        patch("backend.config.health.transaction.atomic", return_value=nullcontext()),
+    ):
         assert health_views._database_is_ready() is True
 
-    cursor.execute.assert_called_once_with("SELECT 1")
+    assert cursor.execute.call_args_list[-1].args == ("SELECT 1",)
 
 
 def test_redis_probe_uses_short_timeouts_and_closes_client(settings: object) -> None:

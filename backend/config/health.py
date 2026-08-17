@@ -5,7 +5,7 @@ from typing import Any
 
 import redis
 from django.conf import settings
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
@@ -20,9 +20,13 @@ def _json_response(payload: dict[str, Any], *, status: int = 200) -> JsonRespons
 
 def _database_is_ready() -> bool:
     try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            return cursor.fetchone() == (1,)
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                if connection.vendor == "postgresql":
+                    timeout_ms = int(PROBE_TIMEOUT_SECONDS * 1000)
+                    cursor.execute(f"SET LOCAL statement_timeout = '{timeout_ms}ms'")
+                cursor.execute("SELECT 1")
+                return cursor.fetchone() == (1,)
     except DatabaseError:
         return False
 
