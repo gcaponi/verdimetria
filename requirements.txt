@@ -7,7 +7,7 @@ geopandas==1.1.4
 # Machine learning
 scikit-learn==1.8.0
 numpy==2.4.4
-scipy==1.17.1
+scipy==1.18.0
 
 # Ingestione dati
 owslib==0.36.0          # WMS/WFS per il Geoportale S.I.T.R. Sicilia
