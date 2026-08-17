@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Bash syntax of release scripts
+        run: bash -n deploy/verdimetria-release.sh && bash -n deploy/verdimetria-rollback.sh
+      - name: Release assets present
+        run: test -f deploy/nginx/verdimetria-api.conf && test -f deploy/nginx/verdimetria-limits.conf

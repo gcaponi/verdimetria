@@ -10,6 +10,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from backend.accounts.models import User
 from backend.accounts.serializers import (
@@ -28,10 +29,20 @@ class RegisterView(CreateAPIView):
     queryset = User.objects.all()
     permission_classes = (AllowAny,)
     serializer_class = RegisterSerializer
+    throttle_scope = "auth"
+
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    throttle_scope = "auth"
+
+
+class ThrottledTokenRefreshView(TokenRefreshView):
+    throttle_scope = "auth"
 
 
 class PasswordResetRequestView(APIView):
     permission_classes = (AllowAny,)
+    throttle_scope = "auth"
 
     def post(self, request: Request) -> Response:
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -63,6 +74,7 @@ class PasswordResetRequestView(APIView):
 
 class PasswordResetConfirmView(APIView):
     permission_classes = (AllowAny,)
+    throttle_scope = "auth"
 
     def post(self, request: Request) -> Response:
         serializer = PasswordResetConfirmSerializer(data=request.data)

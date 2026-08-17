@@ -31,6 +31,11 @@ class FieldViewSet(viewsets.ModelViewSet):
     serializer_class = FieldSerializer
     http_method_names = ("get", "post", "delete", "head", "options")
 
+    def get_throttles(self):
+        if getattr(self, "action", None) == "jobs" and self.request.method == "POST":
+            self.throttle_scope = "jobs"
+        return super().get_throttles()
+
     def get_queryset(self) -> QuerySet[Field]:
         if self.request.user.is_anonymous:
             return Field.objects.none()
@@ -112,6 +117,8 @@ class FieldViewSet(viewsets.ModelViewSet):
             )
 
         idempotency_key = compute_idempotency_key(field, params)
+        dispatch_pk: str | None = None
+        status_code = status.HTTP_200_OK
         with transaction.atomic():
             existing = (
                 AnalysisJob.objects.select_for_update()
@@ -129,30 +136,27 @@ class FieldViewSet(viewsets.ModelViewSet):
                     existing.save(
                         update_fields=("status", "error", "progress_step", "completed_at")
                     )
-                    run_analysis_job.delay(str(existing.pk))
-                return Response(
-                    AnalysisJobSerializer(existing).data, status=status.HTTP_200_OK
-                )
+                    dispatch_pk = str(existing.pk)
+                job = existing
+            else:
+                owner = cast(User, request.user)
+                try:
+                    job = AnalysisJob.objects.create(
+                        field=field,
+                        owner=owner,
+                        boundary_version=params["boundary_version"],
+                        idempotency_key=idempotency_key,
+                        params=params,
+                    )
+                    dispatch_pk = str(job.pk)
+                    status_code = status.HTTP_201_CREATED
+                except IntegrityError:
+                    # Race con una creazione concorrente: vince la richiesta arrivata prima.
+                    job = AnalysisJob.objects.get(idempotency_key=idempotency_key)
 
-            owner = cast(User, request.user)
-            try:
-                job = AnalysisJob.objects.create(
-                    field=field,
-                    owner=owner,
-                    boundary_version=params["boundary_version"],
-                    idempotency_key=idempotency_key,
-                    params=params,
-                )
-            except IntegrityError:
-                # Race con una creazione concorrente: vince la richiesta arrivata prima.
-                job = AnalysisJob.objects.get(idempotency_key=idempotency_key)
-                return Response(AnalysisJobSerializer(job).data, status=status.HTTP_200_OK)
-
-        run_analysis_job.delay(str(job.pk))
-        return Response(
-            AnalysisJobSerializer(job).data,
-            status=status.HTTP_201_CREATED,
-        )
+        if dispatch_pk is not None:
+            run_analysis_job.delay(dispatch_pk)
+        return Response(AnalysisJobSerializer(job).data, status=status_code)
 
     @action(detail=True, methods=("get", "post"), url_path="interventions")
     def interventions(self, request: Request, **kwargs: Any) -> Response:

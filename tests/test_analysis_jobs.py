@@ -284,6 +284,23 @@ def test_create_job_rejects_invalid_dates(
 
 
 @pytest.mark.django_db
+def test_create_job_rejects_period_longer_than_two_years(
+    api_client: APIClient,
+    user: User,
+    field: Field,
+    delay_spy: Mock,
+) -> None:
+    api_client.force_authenticate(user)
+    response = api_client.post(
+        f"/api/v1/fields/{field.pk}/jobs/",
+        {"start_date": "2020-01-01", "end_date": "2026-01-02"},
+        format="json",
+    )
+    assert response.status_code == 400
+    delay_spy.assert_not_called()
+
+
+@pytest.mark.django_db
 def test_create_job_requires_boundary(api_client: APIClient, user: User, delay_spy: Mock) -> None:
     api_client.force_authenticate(user)
     empty_field = Field.objects.create(owner=user, name="Campo senza confine")

@@ -1,16 +1,16 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-
 from backend.accounts.views import (
     PasswordResetConfirmView,
     PasswordResetRequestView,
     RegisterView,
+    ThrottledTokenObtainPairView,
+    ThrottledTokenRefreshView,
 )
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
-    path("token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("token/", ThrottledTokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("token/refresh/", ThrottledTokenRefreshView.as_view(), name="token_refresh"),
     path("password-reset/", PasswordResetRequestView.as_view(), name="password_reset"),
     path(
         "password-reset/confirm/",

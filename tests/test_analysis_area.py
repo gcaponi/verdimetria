@@ -72,6 +72,15 @@ def test_analysis_area_rejects_unsupported_or_invalid_geometry(
         AnalysisArea.from_geojson("Campo", geometry)
 
 
+def test_analysis_area_rejects_too_many_vertices():
+    south = [[14.60 + i * 0.00001, 36.92] for i in range(500)]
+    ring = [*south, [14.605, 36.93], [14.60, 36.93], south[0]]
+    geometry = {"type": "Polygon", "coordinates": [ring]}
+
+    with pytest.raises(ValueError, match="Troppi vertici"):
+        AnalysisArea.from_geojson("Campo denso", geometry)
+
+
 def test_analysis_area_enforces_pixel_budget():
     area = AnalysisArea.from_geojson("Campo pilota", FIELD_POLYGON)
 

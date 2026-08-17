@@ -13,6 +13,16 @@ from shapely.validation import explain_validity
 
 GeoJsonGeometry: TypeAlias = dict[str, Any]
 
+MAX_VERTICES = 500
+MIN_AREA_HECTARES = 0.01
+MAX_AREA_HECTARES = 2_500
+
+
+def _vertex_count(geometry: Polygon | MultiPolygon) -> int:
+    if isinstance(geometry, Polygon):
+        return len(geometry.exterior.coords)
+    return sum(len(part.exterior.coords) for part in geometry.geoms)
+
 
 @dataclass(frozen=True, slots=True)
 class RasterDimensions:
@@ -54,7 +64,19 @@ class AnalysisArea:
         if west < -180 or east > 180 or south < -90 or north > 90:
             raise ValueError("Le coordinate devono essere WGS84 lon/lat")
 
-        return cls(name=normalized_name, geometry=parsed_geometry)
+        vertex_count = _vertex_count(parsed_geometry)
+        if vertex_count > MAX_VERTICES:
+            raise ValueError(
+                f"Troppi vertici ({vertex_count}, massimo {MAX_VERTICES})"
+            )
+
+        area = cls(name=normalized_name, geometry=parsed_geometry)
+        hectares = area.area_hectares(area.local_utm_crs())
+        if hectares < MIN_AREA_HECTARES:
+            raise ValueError("Il campo deve avere una superficie di almeno 0,01 ha")
+        if hectares > MAX_AREA_HECTARES:
+            raise ValueError("Il campo supera la superficie massima di 2500 ha")
+        return area
 
     def to_geojson(self) -> GeoJsonGeometry:
         return mapping(self.geometry)

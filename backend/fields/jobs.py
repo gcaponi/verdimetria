@@ -10,6 +10,7 @@ from backend.fields.models import Field
 
 DEFAULT_MAX_CLOUD_COVER = 20
 DEFAULT_END_LAG_DAYS = 3
+MAX_PERIOD_DAYS = 731
 LARGE_FIELD_THRESHOLD_HECTARES = 500
 DEFAULT_RESOLUTION_M = 10
 LARGE_FIELD_RESOLUTION_M = 20
@@ -58,6 +59,9 @@ def build_job_params(
     end = parse_iso_date(end_date, "end_date") if end_date else default_end
     if start >= end:
         raise ValueError("L'intervallo temporale non e' valido")
+    span = date.fromisoformat(end) - date.fromisoformat(start)
+    if span.days > MAX_PERIOD_DAYS:
+        raise ValueError("L'intervallo temporale non puo' superare due anni")
 
     return {
         "start_date": start,

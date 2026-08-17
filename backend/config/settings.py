@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
 
@@ -130,8 +131,22 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "30/min",
+        "user": "120/min",
+        "auth": "10/min",
+        "jobs": "10/hour",
+    },
     "COERCE_DECIMAL_TO_STRING": False,
 }
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 200
 
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
@@ -145,7 +160,34 @@ if not DEBUG and not JWT_SIGNING_KEY:
     raise ImproperlyConfigured("DJANGO_JWT_SIGNING_KEY e' obbligatoria quando DEBUG=false")
 SIMPLE_JWT = {
     "SIGNING_KEY": JWT_SIGNING_KEY or SECRET_KEY,
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
+
+if not DEBUG and os.getenv("REDIS_URL"):
+    _redis = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+    if _redis.rsplit("/", 1)[-1].isdigit():
+        _cache_redis = f"{_redis.rsplit('/', 1)[0]}/2"
+    else:
+        _cache_redis = f"{_redis.rstrip('/')}/2"
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": _cache_redis,
+        }
+    }
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # nginx already terminates TLS; enable Django redirect only when asked
+    # so the test suite (DEBUG=false against SQLite/PostGIS) does not 301.
+    SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", default=False)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = "DENY"
 
 LANGUAGE_CODE = "it-it"
 TIME_ZONE = "UTC"

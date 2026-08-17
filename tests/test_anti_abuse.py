@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from django.core.cache import cache
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
@@ -97,3 +98,21 @@ def test_demo_fields_do_not_count_toward_cap(api_client: APIClient, user: User) 
     assert Field.objects.filter(owner=user, is_demo=False).count() == 3
     # The cap applies again once three non-demo fields exist.
     assert create_field(api_client).status_code == 403
+
+
+@pytest.mark.django_db
+def test_login_is_rate_limited(api_client: APIClient, settings: Any) -> None:
+    settings.REST_FRAMEWORK = {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {
+            **settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"],
+            "auth": "1/min",
+            "anon": "1000/min",
+        },
+    }
+    cache.clear()
+    payload = {"email": "nobody@example.com", "password": "wrong"}
+    first = api_client.post("/api/v1/auth/token/", payload, format="json")
+    second = api_client.post("/api/v1/auth/token/", payload, format="json")
+    assert first.status_code in {400, 401}
+    assert second.status_code == 429
