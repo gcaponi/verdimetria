@@ -29,7 +29,7 @@ interface Props {
 }
 
 type DrawMode = "none" | "rect" | "poly";
-type LayerStatus = "idle" | "loading" | "ready" | "error";
+type LayerStatus = "idle" | "loading" | "ready" | "empty" | "error";
 
 export default function MapPanelNational({
   areas,
@@ -268,17 +268,28 @@ export default function MapPanelNational({
     const clipPath = polygonClipPath(selectedArea);
 
     if (activeLayer.provider !== "cdse") {
-      // SoilGrids: single-shot overlay, no acquisition date or coverage handling.
+      // SoilGrids: single-shot overlay. Urban/water cells are valid 200 PNGs
+      // with every pixel transparent — treat that as empty, not "loaded".
       const overlay = L.imageOverlay(buildWmsUrl(activeLayer, selectedArea), imageBounds, {
         opacity: 0.82,
         interactive: false,
+        crossOrigin: true,
       });
-      overlay.on("load", () => setOverlayState({ key: overlayKey, status: "ready" }));
+      overlay.on("load", () => {
+        const element = overlay.getElement();
+        if (element) {
+          element.style.clipPath = clipPath;
+          element.style.imageRendering = "auto";
+        }
+        const opacity = measureImageOpacity(overlay);
+        setOverlayState({
+          key: overlayKey,
+          status: opacity !== null && opacity < 0.01 ? "empty" : "ready",
+        });
+      });
       overlay.on("error", () => setOverlayState({ key: overlayKey, status: "error" }));
       overlay.addTo(map);
       overlayRef.current = overlay;
-      const element = overlay.getElement();
-      if (element) element.style.clipPath = clipPath;
       return;
     }
 
@@ -336,7 +347,10 @@ export default function MapPanelNational({
           displayed = overlay;
           overlayRef.current = overlay;
           const element = overlay.getElement();
-          if (element) element.style.clipPath = clipPath;
+          if (element) {
+            element.style.clipPath = clipPath;
+            element.style.imageRendering = "auto";
+          }
           setOverlayState({ key: overlayKey, status: "ready" });
 
           const scene = await scenePromise;
@@ -560,6 +574,30 @@ function formatSceneDate(isoDate: string): string {
  * send CORS headers, or canvas unsupported): callers then skip the coverage
  * logic silently and keep the single-request behaviour.
  */
+function measureImageOpacity(overlay: L.ImageOverlay): number | null {
+  const element = overlay.getElement();
+  if (!(element instanceof HTMLImageElement)) return null;
+  const width = element.naturalWidth;
+  const height = element.naturalHeight;
+  if (width === 0 || height === 0) return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return null;
+    context.drawImage(element, 0, 0);
+    const pixels = context.getImageData(0, 0, width, height).data;
+    let opaque = 0;
+    for (let offset = 3; offset < pixels.length; offset += 4) {
+      if (pixels[offset] > 0) opaque += 1;
+    }
+    return opaque / (width * height);
+  } catch {
+    return null;
+  }
+}
+
 function measurePolygonCoverage(overlay: L.ImageOverlay, area: MapArea): number | null {
   const element = overlay.getElement();
   if (!(element instanceof HTMLImageElement)) return null;
@@ -686,12 +724,18 @@ function layerStatusLabel(status: LayerStatus, provider: "cdse" | "soilgrids" | 
   const providerLabel = provider === "soilgrids" ? "SoilGrids" : "CDSE";
   if (status === "loading") return `Caricamento da ${providerLabel}…`;
   if (status === "ready") return `Dati ${providerLabel} caricati`;
+  if (status === "empty") {
+    return provider === "soilgrids"
+      ? "SoilGrids non copre quest'area (spesso città o acqua)"
+      : "Nessun dato nel riquadro del campo";
+  }
   if (status === "error") return "Layer non disponibile per l'intervallo richiesto";
   return "";
 }
 
 function layerStatusColor(status: LayerStatus): string {
   if (status === "ready") return "shrink-0 font-medium text-emerald-300";
+  if (status === "empty") return "shrink-0 font-medium text-amber-300";
   if (status === "error") return "shrink-0 font-medium text-rose-300";
   return "shrink-0 font-medium text-amber-300";
 }

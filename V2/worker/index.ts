@@ -213,7 +213,7 @@ async function previewLayer(url: URL, env: Env, context: ExecutionContext): Prom
     throw new ApiError(400, "Layer visuale non supportato");
   }
 
-  const cacheId = await digest(JSON.stringify({ v: 1, ...query }));
+  const cacheId = await digest(JSON.stringify({ v: 2, ...query }));
   const cacheKey = new Request(`https://layer-cache.verdimetria/${cacheId}`);
   const cache = defaultCache();
   const cached = await cache.match(cacheKey);
@@ -240,6 +240,10 @@ async function previewLayer(url: URL, env: Env, context: ExecutionContext): Prom
             },
             maxCloudCoverage: 30,
             mosaickingOrder: "mostRecent",
+          },
+          processing: {
+            upsampling: "BILINEAR",
+            downsampling: "BILINEAR",
           },
         },
       ],

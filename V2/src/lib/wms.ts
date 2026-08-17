@@ -321,19 +321,20 @@ export function buildWmsUrl(layer: WmsLayer, area: MapArea, timeWindow?: SceneTi
   const bounds = areaBounds(area);
   if (layer.provider === "soilgrids" && layer.soilProperty && layer.remoteLayer) {
     const params = new URLSearchParams({
+      map: `/map/${layer.soilProperty}.map`,
       SERVICE: "WMS",
       VERSION: "1.1.1",
       REQUEST: "GetMap",
       LAYERS: layer.remoteLayer,
-      STYLES: "",
+      STYLES: "default",
       BBOX: `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`,
       SRS: "EPSG:4326",
-      WIDTH: "1024",
-      HEIGHT: "1024",
+      WIDTH: "512",
+      HEIGHT: "512",
       FORMAT: "image/png",
       TRANSPARENT: "true",
     });
-    return `https://maps.isric.org/mapserv/${layer.soilProperty}?${params.toString()}`;
+    return `https://maps.isric.org/mapserv?${params.toString()}`;
   }
 
   const timeRange = timeWindow ?? currentSceneWindow();
