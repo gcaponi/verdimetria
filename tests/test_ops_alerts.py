@@ -4,7 +4,6 @@ from io import StringIO
 from unittest.mock import patch
 
 import pytest
-from django.core import mail
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import override_settings
@@ -18,13 +17,15 @@ from backend.fields.management.commands.send_ops_alert import EVENTS
     DEFAULT_FROM_EMAIL="Verdimetria <ops@example.com>",
     OPS_ALERT_EMAIL="owner@example.com",
 )
-def test_each_allowlisted_event_sends_one_fixed_message(event: str) -> None:
+def test_each_allowlisted_event_sends_one_fixed_message(
+    event: str, mailoutbox: list
+) -> None:
     stdout = StringIO()
 
     call_command("send_ops_alert", event, stdout=stdout)
 
-    assert len(mail.outbox) == 1
-    message = mail.outbox[0]
+    assert len(mailoutbox) == 1
+    message = mailoutbox[0]
     assert message.to == ["owner@example.com"]
     assert (message.subject, message.body) == EVENTS[event]
     assert event in stdout.getvalue()
@@ -32,13 +33,15 @@ def test_each_allowlisted_event_sends_one_fixed_message(event: str) -> None:
 
 @pytest.mark.parametrize("recipient", ["", "not-an-email"])
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
-def test_recipient_is_required_and_validated(settings: object, recipient: str) -> None:
+def test_recipient_is_required_and_validated(
+    settings: object, recipient: str, mailoutbox: list
+) -> None:
     settings.OPS_ALERT_EMAIL = recipient
 
     with pytest.raises(CommandError, match="OPS_ALERT_EMAIL"):
         call_command("send_ops_alert", "test")
 
-    assert not mail.outbox
+    assert not mailoutbox
 
 
 @override_settings(

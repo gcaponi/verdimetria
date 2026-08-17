@@ -8,11 +8,18 @@ readonly PG_ARCHIVE_STATUS="/var/lib/postgresql/16/main/pg_wal/archive_status"
 readonly BACKUP_MAX_AGE_SECONDS=108000  # 30 ore
 readonly MIRROR_MAX_AGE_SECONDS=28800   # 8 ore
 readonly DISK_THRESHOLD=80
+readonly CMD_TIMEOUT=60
 
 delivery_failed=0
 
+run_timeout() {
+    /usr/bin/timeout --kill-after=5 "$CMD_TIMEOUT" "$@"
+}
+
 exec 9>/run/verdimetria-backup-watchdog.lock
 if ! /usr/bin/flock -n 9; then
+    /usr/bin/logger -p user.warning -t verdimetria-watchdog -- \
+        "lock occupato, skip run"
     exit 0
 fi
 
@@ -37,7 +44,7 @@ set_condition() {
     if (( active )); then
         /usr/bin/logger -t verdimetria-watchdog -- "$event attivo"
         if [[ ! -e "$state_file" ]]; then
-            if /usr/bin/systemctl start "verdimetria-ops-alert@${event}.service"; then
+            if run_timeout /usr/bin/systemctl start "verdimetria-ops-alert@${event}.service"; then
                 /usr/bin/touch "$state_file"
             else
                 delivery_failed=1
@@ -55,7 +62,7 @@ backup_bad=0
 if is_stale "$BACKUP_MARKER" "$BACKUP_MAX_AGE_SECONDS"; then
     backup_bad=1
 fi
-if ! /usr/sbin/runuser -u postgres -- /usr/bin/pgbackrest \
+if ! run_timeout /usr/sbin/runuser -u postgres -- /usr/bin/pgbackrest \
     --stanza=verdimetria --output=json info \
     | /usr/bin/python3 -c \
         'import json, sys; data=json.load(sys.stdin); raise SystemExit(not data or data[0]["status"]["code"] != 0)' ; then
@@ -65,14 +72,14 @@ set_condition "backup-stale" "$backup_bad"
 
 wal_bad=0
 old_ready=$(
-    /usr/bin/find "$PG_ARCHIVE_STATUS" -maxdepth 1 -type f -name '*.ready' \
+    run_timeout /usr/bin/find "$PG_ARCHIVE_STATUS" -maxdepth 1 -type f -name '*.ready' \
         -mmin +10 -print -quit 2>/dev/null || true
 )
 if [[ -n "$old_ready" ]]; then
     wal_bad=1
 fi
 wal_failure=$(
-    /usr/sbin/runuser -u postgres -- /usr/bin/psql -XAtd postgres -c \
+    run_timeout /usr/sbin/runuser -u postgres -- /usr/bin/psql -XAtd postgres -c \
         "SELECT CASE WHEN last_failed_time IS NOT NULL AND (last_archived_time IS NULL OR last_archived_time < last_failed_time) THEN 1 ELSE 0 END FROM pg_stat_archiver;" \
         2>/dev/null
 ) || wal_failure="1"
@@ -82,11 +89,11 @@ fi
 set_condition "wal-stalled" "$wal_bad"
 
 disk_bad=0
-if ! /usr/bin/df -P /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
+if ! run_timeout /usr/bin/df -P /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
     | /usr/bin/awk 'NR > 1 {gsub(/%/, "", $5); if ($5 >= 80) exit 1}'; then
     disk_bad=1
 fi
-if ! /usr/bin/df -Pi /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
+if ! run_timeout /usr/bin/df -Pi /var/lib/pgbackrest /var/lib/postgresql/16/main /var/log \
     | /usr/bin/awk 'NR > 1 {gsub(/%/, "", $5); if ($5 >= 80) exit 1}'; then
     disk_bad=1
 fi
